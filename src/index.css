@@ -2,77 +2,130 @@
 @tailwind components;
 @tailwind utilities;
 
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-/* Prevent layout shifts */
-.flex-shrink-0 {
-  flex-shrink: 0;
-}
-
-.overflow-hidden {
-  overflow: hidden;
-}
-
-.overflow-y-auto {
-  overflow-y: auto;
-}
-
-.sidebar-chats {
-  scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 #f1f5f9;
-}
-
-.sidebar-chats::-webkit-scrollbar {
-  width: 6px;
-}
-
-.sidebar-chats::-webkit-scrollbar-track {
-  background: #f1f5f9;
-  border-radius: 10px;
-}
-
-.sidebar-chats::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 10px;
-}
-
-.sidebar-chats::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-/* Animation for unread badge */
-@keyframes pulse-red {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.05);
-  }
-}
-
-.badge-unread {
-  animation: pulse-red 1s ease-in-out infinite;
-}
-
 @layer base {
-  * {
-    @apply transition-colors duration-200;
+  html,
+  body,
+  #root {
+    height: 100%;
   }
 
   body {
-    @apply bg-gray-50 dark:bg-gray-900;
+    @apply bg-gray-50 text-gray-900 antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+}
+
+@layer components {
+  .input-field {
+    @apply w-full rounded-xl border border-transparent bg-gray-100 px-4 py-3 text-sm text-gray-900 placeholder-gray-400 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-4 focus:ring-indigo-100 disabled:opacity-60;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-500 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-red-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .icon-btn {
+    @apply inline-flex items-center justify-center rounded-full p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .card {
+    @apply rounded-2xl border border-gray-100 bg-white shadow-sm;
+  }
+
+  .thin-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+
+  .thin-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .thin-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 999px;
+  }
+
+  /* logo mark, see components/brand/Logo.jsx */
+  .cl-logo {
+    --cl-size: 36px;
+    --cl-stroke: calc(var(--cl-size) * 0.085);
+    position: relative;
+    display: inline-block;
+    flex-shrink: 0;
+    width: var(--cl-size);
+    height: var(--cl-size);
+    border-radius: 28%;
+    background: linear-gradient(140deg, #6366f1 0%, #7c3aed 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      0 calc(var(--cl-size) * 0.12) calc(var(--cl-size) * 0.32) calc(var(--cl-size) * -0.12)
+        rgba(79, 70, 229, 0.55);
+  }
+
+  .cl-logo--glass {
+    background: rgba(255, 255, 255, 0.16);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+      0 calc(var(--cl-size) * 0.12) calc(var(--cl-size) * 0.3) rgba(30, 27, 75, 0.25);
+  }
+
+  .cl-logo__ring {
+    position: absolute;
+    width: 44%;
+    height: 44%;
+    border-radius: 50%;
+    border: var(--cl-stroke) solid #fff;
+    box-sizing: border-box;
+  }
+
+  .cl-logo__ring--a {
+    left: 15%;
+    top: 22%;
+  }
+
+  .cl-logo__ring--b {
+    left: 41%;
+    top: 34%;
+    border-color: rgba(255, 255, 255, 0.78);
+  }
+
+  /* a clipped copy of ring a drawn over ring b, so the rings look linked */
+  .cl-logo__ring--over {
+    clip-path: inset(0 0 40% 60%);
+  }
+
+  .cl-logo__tail {
+    position: absolute;
+    left: 12%;
+    top: 54%;
+    width: 16%;
+    height: 20%;
+    background: #fff;
+    clip-path: polygon(44% 5%, 97% 45%, 6% 95%);
+  }
+
+  .cl-wordmark {
+    @apply text-xl font-extrabold tracking-tight text-gray-900;
+  }
+
+  .cl-wordmark > span {
+    @apply bg-gradient-to-r from-indigo-500 to-violet-600 bg-clip-text text-transparent;
+  }
+
+  .cl-wordmark--light,
+  .cl-wordmark--light > span {
+    @apply text-white;
+    background: none;
+    -webkit-text-fill-color: currentColor;
   }
 }
