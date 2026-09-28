@@ -1,629 +1,385 @@
-import React, { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from "firebase/auth";
+import { motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
+import toast from "react-hot-toast";
 import {
-  FiX,
+  FiBell,
   FiCamera,
-  FiUser,
-  FiMail,
-  FiAtSign,
-  FiPhone,
-  FiMapPin,
-  FiEdit2,
-  FiSave,
+  FiCopy,
+  FiEye,
   FiLock,
   FiLogOut,
-  FiCircle,
-  FiCheckCircle,
-  FiAlertCircle,
-  FiEye,
-  FiEyeOff,
+  FiUser,
+  FiVolume2,
+  FiX,
 } from "react-icons/fi";
+import { auth } from "../../firebase/config";
+import { updateUserProfile } from "../../firebase/firestoreService";
+import { logout } from "../../service/userStatus";
+import { formatMonthYear } from "../../utils/dateUtils";
 import {
-  getAuth,
-  updatePassword,
-  EmailAuthProvider,
-  reauthenticateWithCredential,
-} from "firebase/auth";
-import { supabase, uploadProfileImage } from "../../utils/supabase";
-import {
-  updateUserProfile,
-  updateUserStatus,
-} from "../../firebase/firestoreService";
+  canUseDesktopNotifications,
+  getPrefs,
+  playNotificationSound,
+  requestDesktopPermission,
+  savePrefs,
+} from "../../utils/notify";
+import { uploadProfileImage } from "../../utils/supabase";
+import { avatarFor, formatUsername } from "../../utils/userDisplay";
+import FormField from "../auth/FormField";
+import Toggle from "../common/Toggle";
 
-const SettingsPanel = ({ user, onClose, onUpdate, onLogout }) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [avatarUrl, setAvatarUrl] = useState(
-    user.avatar ||
-      user.photoURL ||
-      `https://ui-avatars.com/api/?name=${encodeURIComponent(
-        user.name || "User"
-      )}&background=6366f1&color=fff`
-  );
-  const [formData, setFormData] = useState({
+const Section = ({ icon: Icon, title, action, children }) => (
+  <section className="card overflow-hidden">
+    <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5">
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+        <Icon className="text-indigo-500" /> {title}
+      </h3>
+      {action}
+    </div>
+    <div className="p-5">{children}</div>
+  </section>
+);
+
+const SettingRow = ({ title, description, children }) => (
+  <div className="flex items-center justify-between gap-4 py-2">
+    <div>
+      <p className="text-sm font-medium text-gray-800">{title}</p>
+      {description && <p className="text-xs text-gray-500">{description}</p>}
+    </div>
+    {children}
+  </div>
+);
+
+const SettingsPanel = ({ user, onClose }) => {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [form, setForm] = useState({
     name: user.name || "",
-    username: user.username || "",
     bio: user.bio || "",
     phone: user.phone || "",
     location: user.location || "",
   });
-  const [passwordData, setPasswordData] = useState({
-    currentPassword: "",
-    newPassword: "",
-    confirmPassword: "",
-  });
-  const [statusMessage, setStatusMessage] = useState({ type: "", text: "" });
-  const [activeStatus, setActiveStatus] = useState(user.status === "online");
-
+  const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [prefs, setPrefs] = useState(getPrefs);
   const fileInputRef = useRef(null);
-  const auth = getAuth();
 
-  const showMessage = (type, text) => {
-    setStatusMessage({ type, text });
-    setTimeout(() => setStatusMessage({ type: "", text: "" }), 3000);
-  };
+  const usesPassword = auth.currentUser?.providerData.some((p) => p.providerId === "password");
+  const showStatus = user.showActiveStatus !== false;
 
-  const handleAvatarClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleAvatarUpload = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      showMessage("error", "Please select an image file");
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      showMessage("error", "Image must be less than 5MB");
-      return;
-    }
-
-    setIsUploading(true);
-    try {
-      const publicUrl = await uploadProfileImage(file, user.uid);
-
-      if (publicUrl) {
-        setAvatarUrl(publicUrl);
-        await updateUserProfile(user.uid, {
-          avatar: publicUrl,
-          photoURL: publicUrl,
-          updatedAt: new Date().toISOString(),
-        });
-
-        showMessage("success", "Profile picture updated!");
-        onUpdate({ ...formData, avatar: publicUrl });
-      } else {
-        throw new Error("Upload failed");
-      }
-    } catch (err) {
-      console.error("Avatar upload error:", err);
-      showMessage("error", "Failed to upload image");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleSave = async () => {
-    setIsUploading(true);
-    try {
-      await updateUserProfile(user.uid, {
-        name: formData.name,
-        bio: formData.bio,
-        phone: formData.phone,
-        location: formData.location,
-        avatar: avatarUrl,
-        photoURL: avatarUrl,
-        updatedAt: new Date().toISOString(),
-      });
-
-      showMessage("success", "Profile updated successfully!");
-      onUpdate({ ...formData, avatar: avatarUrl });
-      setIsEditing(false);
-    } catch (err) {
-      console.error("Save error:", err);
-      showMessage("error", err.message || "Failed to update profile");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handlePasswordChange = async () => {
-    if (!passwordData.currentPassword) {
-      showMessage("error", "Please enter your current password");
-      return;
-    }
-    if (passwordData.newPassword !== passwordData.confirmPassword) {
-      showMessage("error", "New passwords do not match");
-      return;
-    }
-    if (passwordData.newPassword.length < 6) {
-      showMessage("error", "Password must be at least 6 characters");
-      return;
-    }
-
-    setIsUploading(true);
-    try {
-      const currentUser = auth.currentUser;
-      if (currentUser && currentUser.email) {
-        const credential = EmailAuthProvider.credential(
-          currentUser.email,
-          passwordData.currentPassword
-        );
-        await reauthenticateWithCredential(currentUser, credential);
-
-        await updatePassword(currentUser, passwordData.newPassword);
-
-        showMessage("success", "Password updated successfully!");
-        setIsChangingPassword(false);
-        setPasswordData({
-          currentPassword: "",
-          newPassword: "",
-          confirmPassword: "",
-        });
-      } else {
-        throw new Error("No user logged in");
-      }
-    } catch (err) {
-      console.error("Password error:", err);
-      if (err.code === "auth/wrong-password") {
-        showMessage("error", "Current password is incorrect");
-      } else if (err.code === "auth/requires-recent-login") {
-        showMessage(
-          "error",
-          "Please log out and log in again to change password"
-        );
-      } else {
-        showMessage("error", err.message || "Failed to update password");
-      }
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleActiveStatusToggle = async () => {
-    const newStatus = !activeStatus;
-    setActiveStatus(newStatus);
-    try {
-      await updateUserStatus(user.uid, newStatus ? "online" : "offline");
-      showMessage("success", `You are now ${newStatus ? "online" : "offline"}`);
-      onUpdate({ ...formData, status: newStatus ? "online" : "offline" });
-    } catch (err) {
-      console.error("Status error:", err);
-      setActiveStatus(!newStatus);
-      showMessage("error", "Failed to update status");
-    }
-  };
-
-  // Handle ESC key to close
   useEffect(() => {
-    const handleEsc = (e) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleEsc);
-    return () => document.removeEventListener("keydown", handleEsc);
+    const onKeyDown = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  // Prevent click inside panel from closing
-  const handlePanelClick = (e) => {
-    e.stopPropagation();
+  const handleAvatar = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return toast.error("Please pick an image.");
+    if (file.size > 5 * 1024 * 1024) return toast.error("Image should be under 5 MB.");
+
+    setUploading(true);
+    const url = await uploadProfileImage(file, user.uid);
+    if (url && (await updateUserProfile(user.uid, { avatar: url, photoURL: url }))) {
+      toast.success("Profile photo updated");
+    } else {
+      toast.error("Upload failed, please try again.");
+    }
+    setUploading(false);
+  };
+
+  const saveProfile = async () => {
+    if (!form.name.trim()) return toast.error("Name can't be empty.");
+    setSaving(true);
+    const ok = await updateUserProfile(user.uid, {
+      name: form.name.trim(),
+      bio: form.bio.trim(),
+      phone: form.phone.trim(),
+      location: form.location.trim(),
+    });
+    setSaving(false);
+    if (ok) {
+      toast.success("Profile saved");
+      setEditing(false);
+    } else {
+      toast.error("Couldn't save your profile.");
+    }
+  };
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    if (passwords.next.length < 6) return toast.error("New password needs at least 6 characters.");
+    if (passwords.next !== passwords.confirm) return toast.error("New passwords don't match.");
+
+    setSaving(true);
+    try {
+      const current = auth.currentUser;
+      const credential = EmailAuthProvider.credential(current.email, passwords.current);
+      await reauthenticateWithCredential(current, credential);
+      await updatePassword(current, passwords.next);
+      toast.success("Password updated");
+      setPasswords({ current: "", next: "", confirm: "" });
+      setChangingPassword(false);
+    } catch (err) {
+      const wrong = ["auth/wrong-password", "auth/invalid-credential"].includes(err.code);
+      toast.error(wrong ? "Current password is incorrect." : "Couldn't update the password.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updatePref = async (key, value) => {
+    if (key === "desktop" && value && !(await requestDesktopPermission())) {
+      toast.error("Notifications are blocked in your browser settings.");
+      return;
+    }
+    setPrefs(savePrefs({ [key]: value }));
+    if (key === "sound" && value) playNotificationSound();
+  };
+
+  const copyUsername = async () => {
+    try {
+      await navigator.clipboard.writeText(formatUsername(user.username));
+      toast.success("Username copied");
+    } catch {
+      toast.error("Couldn't copy.");
+    }
   };
 
   return (
     <>
-      {/* Backdrop - click outside closes */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={onClose}
-        className="fixed inset-0 bg-black/60 z-50"
+        className="fixed inset-0 z-40 bg-gray-900/40"
       />
-
-      {/* Full Screen Settings Panel */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ type: "spring", damping: 25 }}
-        onClick={handlePanelClick}
-        className="fixed inset-0 bg-white z-50 overflow-y-auto"
+        initial={{ x: "100%" }}
+        animate={{ x: 0 }}
+        exit={{ x: "100%" }}
+        transition={{ type: "spring", damping: 32, stiffness: 320 }}
+        className="thin-scroll fixed inset-y-0 right-0 z-50 w-full max-w-lg overflow-y-auto bg-gray-50 shadow-2xl"
       >
-        <div className="max-w-4xl mx-auto px-4 py-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-200">
-            <h2 className="text-2xl font-bold text-gray-900">Settings</h2>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-            >
-              <FiX className="text-xl text-gray-600" />
-            </button>
-          </div>
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white/90 px-5 py-4 backdrop-blur">
+          <h2 className="text-lg font-bold text-gray-900">Settings</h2>
+          <button onClick={onClose} className="icon-btn" aria-label="Close settings">
+            <FiX className="text-xl" />
+          </button>
+        </div>
 
-          {/* Status Message */}
-          <AnimatePresence>
-            {statusMessage.text && (
-              <motion.div
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className={`mb-4 p-3 rounded-lg flex items-center gap-2 ${
-                  statusMessage.type === "success"
-                    ? "bg-green-50 text-green-700 border border-green-200"
-                    : "bg-red-50 text-red-700 border border-red-200"
-                }`}
+        <div className="space-y-4 p-4 sm:p-5">
+          <div className="card flex items-center gap-4 p-5">
+            <div className="relative flex-shrink-0">
+              <img
+                src={avatarFor(user)}
+                alt=""
+                className="h-20 w-20 rounded-full object-cover ring-4 ring-indigo-50"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="absolute -bottom-0.5 -right-0.5 flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-indigo-500 text-white shadow hover:bg-indigo-600 disabled:opacity-60"
+                aria-label="Change photo"
               >
-                {statusMessage.type === "success" ? (
-                  <FiCheckCircle />
+                {uploading ? (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
                 ) : (
-                  <FiAlertCircle />
+                  <FiCamera size={14} />
                 )}
-                {statusMessage.text}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Sidebar - Profile Summary */}
-            <div className="md:col-span-1">
-              <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl p-6 text-center sticky top-6 border border-indigo-100">
-                <div className="relative w-32 h-32 mx-auto mb-4">
-                  <img
-                    src={avatarUrl}
-                    alt={formData.name}
-                    className="w-32 h-32 rounded-full object-cover ring-4 ring-indigo-300"
-                  />
-                  <button
-                    onClick={handleAvatarClick}
-                    disabled={isUploading}
-                    className="absolute bottom-0 right-0 w-10 h-10 bg-indigo-500 rounded-full flex items-center justify-center border-2 border-white hover:bg-indigo-600 transition-colors disabled:opacity-50 shadow-lg"
-                  >
-                    {isUploading ? (
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <FiCamera className="text-white text-sm" />
-                    )}
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleAvatarUpload}
-                    className="hidden"
-                  />
-                </div>
-                <h3 className="text-xl font-semibold text-gray-900">
-                  {formData.name}
-                </h3>
-                <p className="text-indigo-600">
-                  @
-                  {formData.username ||
-                    formData.name?.toLowerCase().replace(/\s/g, "")}
-                </p>
-                <div className="mt-4 pt-4 border-t border-indigo-200">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-600">Status</span>
-                    <button
-                      onClick={handleActiveStatusToggle}
-                      className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                        activeStatus
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-100 text-gray-500"
-                      }`}
-                    >
-                      <FiCircle className="w-2 h-2 fill-current" />
-                      {activeStatus ? "Active" : "Offline"}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={handleAvatar}
+              />
             </div>
-
-            {/* Main Content */}
-            <div className="md:col-span-2 space-y-6">
-              {/* Edit Profile Section */}
-              <div className="bg-white rounded-2xl border border-indigo-100 overflow-hidden shadow-sm">
-                <div className="px-6 py-4 border-b border-indigo-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/50 to-purple-50/50">
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Profile Information
-                  </h3>
-                  <button
-                    onClick={() => setIsEditing(!isEditing)}
-                    className="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm"
-                  >
-                    <FiEdit2 size={14} />
-                    {isEditing ? "Cancel" : "Edit"}
-                  </button>
-                </div>
-                <div className="p-6 space-y-4">
-                  <InfoItem
-                    icon={<FiUser className="text-indigo-500" />}
-                    label="Full Name"
-                    value={formData.name}
-                    isEditing={isEditing}
-                    onChange={(val) => setFormData({ ...formData, name: val })}
-                  />
-
-                  {/* Username - Read Only */}
-                  <div className="flex items-start gap-3">
-                    <div className="text-indigo-500 mt-1">
-                      <FiAtSign />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-xs text-gray-400">Username</p>
-                      <p className="text-sm text-gray-900 mt-1">
-                        @
-                        {formData.username ||
-                          formData.name?.toLowerCase().replace(/\s/g, "")}
-                      </p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Username cannot be changed
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Email - Read Only */}
-                  <div className="flex items-start gap-3">
-                    <div className="text-indigo-500 mt-1">
-                      <FiMail />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-xs text-gray-400">Email</p>
-                      <p className="text-sm text-gray-900 mt-1">{user.email}</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Email cannot be changed
-                      </p>
-                    </div>
-                  </div>
-
-                  <InfoItem
-                    icon={<FiPhone className="text-indigo-500" />}
-                    label="Phone"
-                    value={formData.phone}
-                    isEditing={isEditing}
-                    onChange={(val) => setFormData({ ...formData, phone: val })}
-                    type="tel"
-                  />
-                  <InfoItem
-                    icon={<FiMapPin className="text-indigo-500" />}
-                    label="Location"
-                    value={formData.location}
-                    isEditing={isEditing}
-                    onChange={(val) =>
-                      setFormData({ ...formData, location: val })
-                    }
-                  />
-                  <InfoItem
-                    icon={<FiUser className="text-indigo-500" />}
-                    label="Bio"
-                    value={formData.bio || "No bio yet"}
-                    isEditing={isEditing}
-                    onChange={(val) => setFormData({ ...formData, bio: val })}
-                    multiline
-                  />
-
-                  {isEditing && (
-                    <motion.button
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      onClick={handleSave}
-                      disabled={isUploading}
-                      className="w-full mt-4 py-2.5 bg-indigo-500 text-white font-medium rounded-lg hover:bg-indigo-600 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-md"
-                    >
-                      <FiSave />
-                      Save Changes
-                    </motion.button>
-                  )}
-                </div>
-              </div>
-
-              {/* Password Change Section */}
-              <div className="bg-white rounded-2xl border border-indigo-100 overflow-hidden shadow-sm">
-                <div className="px-6 py-4 border-b border-indigo-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/50 to-purple-50/50">
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Security
-                  </h3>
-                  <button
-                    onClick={() => setIsChangingPassword(!isChangingPassword)}
-                    className="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm"
-                  >
-                    <FiLock size={14} />
-                    {isChangingPassword ? "Cancel" : "Change Password"}
-                  </button>
-                </div>
-                <div className="p-6">
-                  {isChangingPassword ? (
-                    <div className="space-y-4">
-                      {/* Current Password */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Current Password
-                        </label>
-                        <div className="relative">
-                          <input
-                            type={showCurrentPassword ? "text" : "password"}
-                            placeholder="Enter current password"
-                            value={passwordData.currentPassword}
-                            onChange={(e) =>
-                              setPasswordData({
-                                ...passwordData,
-                                currentPassword: e.target.value,
-                              })
-                            }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:border-transparent pr-10"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setShowCurrentPassword(!showCurrentPassword)
-                            }
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
-                          >
-                            {showCurrentPassword ? (
-                              <FiEyeOff size={18} />
-                            ) : (
-                              <FiEye size={18} />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* New Password */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          New Password
-                        </label>
-                        <div className="relative">
-                          <input
-                            type={showNewPassword ? "text" : "password"}
-                            placeholder="Enter new password (min 6 characters)"
-                            value={passwordData.newPassword}
-                            onChange={(e) =>
-                              setPasswordData({
-                                ...passwordData,
-                                newPassword: e.target.value,
-                              })
-                            }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:border-transparent pr-10"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowNewPassword(!showNewPassword)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
-                          >
-                            {showNewPassword ? (
-                              <FiEyeOff size={18} />
-                            ) : (
-                              <FiEye size={18} />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Confirm Password */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Confirm New Password
-                        </label>
-                        <div className="relative">
-                          <input
-                            type={showConfirmPassword ? "text" : "password"}
-                            placeholder="Confirm new password"
-                            value={passwordData.confirmPassword}
-                            onChange={(e) =>
-                              setPasswordData({
-                                ...passwordData,
-                                confirmPassword: e.target.value,
-                              })
-                            }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:border-transparent pr-10"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setShowConfirmPassword(!showConfirmPassword)
-                            }
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
-                          >
-                            {showConfirmPassword ? (
-                              <FiEyeOff size={18} />
-                            ) : (
-                              <FiEye size={18} />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={handlePasswordChange}
-                        disabled={isUploading}
-                        className="w-full py-2 bg-indigo-500 text-white font-medium rounded-lg hover:bg-indigo-600 transition-all disabled:opacity-50 shadow-md"
-                      >
-                        Update Password
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="text-gray-500 text-sm">
-                      Change your password to keep your account secure.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Danger Zone */}
-              <div className="bg-white rounded-2xl border border-red-200 overflow-hidden shadow-sm">
-                <div className="px-6 py-4 border-b border-red-200 bg-gradient-to-r from-red-50/50 to-rose-50/50">
-                  <h3 className="text-lg font-semibold text-red-600">
-                    Danger Zone
-                  </h3>
-                </div>
-                <div className="p-6">
-                  <button
-                    onClick={onLogout}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors shadow-sm"
-                  >
-                    <FiLogOut />
-                    Log Out
-                  </button>
-                  <p className="text-xs text-gray-500 mt-2">
-                    Logging out will end your current session.
-                  </p>
-                </div>
-              </div>
+            <div className="min-w-0">
+              <p className="truncate text-lg font-semibold text-gray-900">{user.name}</p>
+              <button
+                onClick={copyUsername}
+                className="flex items-center gap-1.5 text-sm text-indigo-500 hover:text-indigo-600"
+              >
+                {formatUsername(user.username)} <FiCopy size={12} />
+              </button>
+              <p className="mt-1 text-xs text-gray-400">
+                ID {user.uniqueId || "----"}
+                {user.createdAt && ` · Joined ${formatMonthYear(user.createdAt)}`}
+              </p>
             </div>
           </div>
+
+          <Section
+            icon={FiUser}
+            title="Profile"
+            action={
+              <button
+                onClick={() => setEditing((v) => !v)}
+                className="text-sm font-medium text-indigo-500 hover:text-indigo-600"
+              >
+                {editing ? "Cancel" : "Edit"}
+              </button>
+            }
+          >
+            {editing ? (
+              <div className="space-y-3">
+                <FormField
+                  placeholder="Full name"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+                <textarea
+                  placeholder="Bio"
+                  rows={3}
+                  maxLength={160}
+                  value={form.bio}
+                  onChange={(e) => setForm({ ...form, bio: e.target.value })}
+                  className="input-field resize-none"
+                />
+                <FormField
+                  type="tel"
+                  placeholder="Phone"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                />
+                <FormField
+                  placeholder="Location"
+                  value={form.location}
+                  onChange={(e) => setForm({ ...form, location: e.target.value })}
+                />
+                <button onClick={saveProfile} disabled={saving} className="btn-primary w-full">
+                  {saving ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            ) : (
+              <dl className="space-y-3 text-sm">
+                {[
+                  ["Email", user.email],
+                  ["Bio", user.bio],
+                  ["Phone", user.phone],
+                  ["Location", user.location],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex gap-4">
+                    <dt className="w-20 flex-shrink-0 text-gray-400">{label}</dt>
+                    <dd className="min-w-0 break-words text-gray-800">
+                      {value || <span className="text-gray-300">Not set</span>}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </Section>
+
+          <Section icon={FiEye} title="Privacy">
+            <SettingRow
+              title="Show when I'm online"
+              description="If this is off, friends see you as offline and can't see your last seen time."
+            >
+              <Toggle
+                label="Show online status"
+                checked={showStatus}
+                onChange={(value) => updateUserProfile(user.uid, { showActiveStatus: value })}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section icon={FiBell} title="Notifications">
+            <SettingRow
+              title="Message sounds"
+              description="Play a sound for new messages and requests."
+            >
+              <Toggle
+                label="Message sounds"
+                checked={prefs.sound}
+                onChange={(v) => updatePref("sound", v)}
+              />
+            </SettingRow>
+            {canUseDesktopNotifications() && (
+              <SettingRow
+                title="Desktop notifications"
+                description="Show a notification when ChatLoop is in the background."
+              >
+                <Toggle
+                  label="Desktop notifications"
+                  checked={prefs.desktop}
+                  onChange={(v) => updatePref("desktop", v)}
+                />
+              </SettingRow>
+            )}
+            <button
+              onClick={playNotificationSound}
+              className="mt-2 flex items-center gap-1.5 text-xs font-medium text-indigo-500 hover:text-indigo-600"
+            >
+              <FiVolume2 /> Test sound
+            </button>
+          </Section>
+
+          <Section icon={FiLock} title="Security">
+            {!usesPassword ? (
+              <p className="text-sm text-gray-500">
+                You signed in with Google or GitHub, so your password is managed there.
+              </p>
+            ) : changingPassword ? (
+              <form onSubmit={changePassword} className="space-y-3">
+                <FormField
+                  type="password"
+                  placeholder="Current password"
+                  autoComplete="current-password"
+                  value={passwords.current}
+                  onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
+                />
+                <FormField
+                  type="password"
+                  placeholder="New password"
+                  autoComplete="new-password"
+                  value={passwords.next}
+                  onChange={(e) => setPasswords({ ...passwords, next: e.target.value })}
+                />
+                <FormField
+                  type="password"
+                  placeholder="Confirm new password"
+                  autoComplete="new-password"
+                  value={passwords.confirm}
+                  onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
+                />
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setChangingPassword(false)}
+                    className="btn-secondary flex-1"
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={saving} className="btn-primary flex-1">
+                    {saving ? "Updating..." : "Update password"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <SettingRow title="Password" description="Change the password you use to log in.">
+                <button
+                  onClick={() => setChangingPassword(true)}
+                  className="btn-secondary px-4 py-2"
+                >
+                  Change
+                </button>
+              </SettingRow>
+            )}
+          </Section>
+
+          <button onClick={logout} className="btn-secondary w-full text-red-600 hover:bg-red-50">
+            <FiLogOut /> Log out
+          </button>
         </div>
       </motion.div>
     </>
-  );
-};
-
-const InfoItem = ({
-  icon,
-  label,
-  value,
-  isEditing,
-  onChange,
-  type = "text",
-  multiline = false,
-}) => {
-  return (
-    <div className="flex items-start gap-3">
-      <div className="text-indigo-500 mt-1">{icon}</div>
-      <div className="flex-1">
-        <p className="text-xs text-gray-400">{label}</p>
-        {isEditing ? (
-          multiline ? (
-            <textarea
-              value={value}
-              onChange={(e) => onChange(e.target.value)}
-              rows={2}
-              className="w-full mt-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-            />
-          ) : (
-            <input
-              type={type}
-              value={value}
-              onChange={(e) => onChange(e.target.value)}
-              className="w-full mt-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          )
-        ) : (
-          <p className="text-sm text-gray-900 mt-1 break-words">
-            {value || "Not set"}
-          </p>
-        )}
-      </div>
-    </div>
   );
 };
 

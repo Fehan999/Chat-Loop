@@ -1,210 +1,197 @@
-// components/chat/Sidebar.jsx
-import { signOut } from "firebase/auth";
-import { motion } from "framer-motion";
-import React, { useEffect, useState } from "react";
-import { FiLogOut, FiSearch, FiSettings, FiUserPlus } from "react-icons/fi";
-import { auth } from "../../firebase/config";
-import { listenToUserStatus } from "../../firebase/firestoreService";
-import { formatLastSeen, getExactTime } from "../../utils/statusHelper";
+import { useState } from "react";
+import { FiLogOut, FiSearch, FiSettings, FiShield, FiUserPlus, FiX } from "react-icons/fi";
+import { Link } from "react-router-dom";
+import { AI_CHAT_KEY, AI_NAME } from "../../constants";
+import { logout } from "../../service/userStatus";
+import { formatChatListTime } from "../../utils/dateUtils";
+import { getStatusDotClass } from "../../utils/statusHelper";
+import Logo from "../brand/Logo";
+import AIAvatar from "./ai/AIAvatar";
+
+const Badge = ({ count }) =>
+  count > 0 ? (
+    <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-indigo-500 px-1.5 text-[11px] font-bold text-white">
+      {count > 99 ? "99+" : count}
+    </span>
+  ) : null;
+
+const ChatRow = ({ chat, active, onSelect }) => {
+  const preview = chat.lastMessage
+    ? `${chat.lastMessageMine ? "You: " : ""}${chat.lastMessage}`
+    : chat.isFriend
+      ? "Say hi 👋"
+      : "No messages yet";
+  const unread = chat.unreadCount > 0;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(chat.key)}
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${
+        active ? "bg-indigo-50" : "hover:bg-gray-50"
+      }`}
+    >
+      <div className="relative flex-shrink-0">
+        <img src={chat.avatar} alt="" className="h-12 w-12 rounded-full object-cover" />
+        <span
+          className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${getStatusDotClass(
+            chat.status
+          )}`}
+        />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className={`truncate text-sm ${unread ? "font-bold" : "font-semibold"} text-gray-900`}>
+            {chat.name}
+          </p>
+          <span
+            className={`flex-shrink-0 text-[11px] ${unread ? "font-semibold text-indigo-500" : "text-gray-400"}`}
+          >
+            {formatChatListTime(chat.lastMessageTime)}
+          </span>
+        </div>
+        <div className="mt-0.5 flex items-center justify-between gap-2">
+          <p
+            className={`truncate text-sm ${unread ? "font-medium text-gray-800" : "text-gray-500"}`}
+          >
+            {preview}
+          </p>
+          <Badge count={chat.unreadCount} />
+        </div>
+      </div>
+    </button>
+  );
+};
 
 const Sidebar = ({
   chats,
-  selectedChat,
+  selectedKey,
   onSelectChat,
-  onAddFriend,
+  onOpenFriends,
   onOpenSettings,
-  isMobileView,
-  currentUser,
+  requestCount,
+  me,
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
-  const [onlineStatuses, setOnlineStatuses] = useState({});
-  const [userLastSeen, setUserLastSeen] = useState({});
+  const term = searchTerm.trim().toLowerCase();
 
-  // Listen to online status for all friends
-  useEffect(() => {
-    const unsubscribes = [];
-    const uniqueUserIds = [
-      ...new Set(chats.map((chat) => chat.userId).filter(Boolean)),
-    ];
-
-    uniqueUserIds.forEach((userId) => {
-      const unsubscribe = listenToUserStatus(userId, (status, lastSeen) => {
-        setOnlineStatuses((prev) => ({
-          ...prev,
-          [userId]: status || "offline",
-        }));
-
-        if (lastSeen) {
-          const lastSeenDate = lastSeen?.toDate?.() || new Date(lastSeen);
-          setUserLastSeen((prev) => ({
-            ...prev,
-            [userId]: lastSeenDate,
-          }));
-        }
-      });
-      unsubscribes.push(unsubscribe);
-    });
-
-    return () => {
-      unsubscribes.forEach((unsubscribe) => unsubscribe());
-    };
-  }, [chats.map((chat) => chat.userId).join(",")]);
-
-  const filteredChats = chats.filter(
-    (chat) =>
-      chat.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      chat.username.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error("Logout error:", error);
-    }
-  };
+  const filteredChats = term
+    ? chats.filter(
+        (chat) =>
+          chat.name.toLowerCase().includes(term) ||
+          chat.username.toLowerCase().includes(term) ||
+          chat.lastMessage.toLowerCase().includes(term)
+      )
+    : chats;
+  const showAI = !term || AI_NAME.toLowerCase().includes(term);
 
   return (
-    <div className="h-full bg-white flex flex-col shadow-lg">
-      {/* Header */}
-      <div className="px-4 py-4 border-b border-gray-200 bg-white sticky top-0 z-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            ChatLoop
-          </h1>
+    <div className="flex h-full flex-col bg-white">
+      <header className="px-4 pb-3 pt-4">
+        <div className="mb-4 flex items-center justify-between">
+          <Logo size={34} withText />
           <div className="flex items-center gap-1">
             <button
-              onClick={onAddFriend}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-              title="Add Friend"
+              onClick={onOpenFriends}
+              className="icon-btn relative"
+              title="Friends & requests"
             >
-              <FiUserPlus className="text-xl text-gray-600" />
+              <FiUserPlus className="text-xl" />
+              {requestCount > 0 && (
+                <span className="absolute right-0.5 top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                  {requestCount}
+                </span>
+              )}
             </button>
-            <button
-              onClick={onOpenSettings}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-              title="Settings"
-            >
-              <FiSettings className="text-xl text-gray-600" />
+            <button onClick={onOpenSettings} className="icon-btn" title="Settings">
+              <FiSettings className="text-xl" />
             </button>
           </div>
         </div>
 
         <div className="relative">
-          <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+          <FiSearch className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
-            placeholder="Search messages or friends..."
+            placeholder="Search chats"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-gray-100 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 transition-all"
+            className="input-field py-2.5 pl-10 pr-9"
           />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+              aria-label="Clear search"
+            >
+              <FiX />
+            </button>
+          )}
         </div>
-      </div>
+      </header>
 
-      {/* Chats List */}
-      <div className="flex-1 overflow-y-auto">
-        {filteredChats.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center p-8">
-            <FiSearch className="text-4xl text-gray-300 mb-3" />
-            <p className="text-gray-500">No conversations yet</p>
-            <p className="text-xs text-gray-400 mt-1">
-              Add friends to start chatting
-            </p>
-          </div>
-        ) : (
-          filteredChats.map((chat) => {
-            const currentStatus =
-              onlineStatuses[chat.userId] || chat.status || "offline";
-            const lastSeenTime = userLastSeen[chat.userId];
-            const isOnline = currentStatus === "online";
-
-            return (
-              <motion.div
-                key={chat.id}
-                whileHover={{ backgroundColor: "#f9fafb" }}
-                onClick={() => onSelectChat(chat)}
-                className={`px-4 py-3 cursor-pointer transition-colors relative hover:bg-gray-50 ${
-                  selectedChat?.id === chat.id
-                    ? "bg-indigo-50 border-l-4 border-indigo-500"
-                    : ""
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  {/* Avatar with Status */}
-                  <div className="relative flex-shrink-0">
-                    <img
-                      src={chat.avatar}
-                      alt={chat.name}
-                      className="w-12 h-12 rounded-full object-cover"
-                    />
-                    <span
-                      className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white ${
-                        isOnline ? "bg-green-500 animate-pulse" : "bg-gray-400"
-                      }`}
-                    ></span>
-                  </div>
-
-                  {/* Chat Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <h4 className="font-semibold text-gray-900 truncate">
-                        {chat.name}
-                      </h4>
-                      <span className="text-xs text-gray-400 flex-shrink-0">
-                        {chat.lastSeen}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500 mb-1 truncate">
-                      {chat.username}
-                    </p>
-                    <p className="text-sm text-gray-600 truncate">
-                      {chat.lastMessage}
-                    </p>
-
-                    {/* Last seen for offline users */}
-                    {!isOnline && lastSeenTime && (
-                      <div className="mt-1 group relative inline-block">
-                        <p className="text-xs text-gray-400 cursor-help">
-                          Last seen {formatLastSeen(lastSeenTime)}
-                        </p>
-                        <div className="absolute bottom-full left-0 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                          {getExactTime(lastSeenTime)}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Online status text */}
-                    {isOnline && (
-                      <p className="text-xs text-green-500 mt-1">Active now</p>
-                    )}
-                  </div>
-
-                  {/* Unread Count Badge */}
-                  {chat.unreadCount > 0 && (
-                    <div className="flex-shrink-0 ml-2">
-                      <div className="min-w-[20px] h-5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1.5 shadow-sm">
-                        {chat.unreadCount > 99 ? "99+" : chat.unreadCount}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            );
-          })
+      <nav className="thin-scroll flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
+        {showAI && (
+          <button
+            type="button"
+            onClick={() => onSelectChat(AI_CHAT_KEY)}
+            className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${
+              selectedKey === AI_CHAT_KEY ? "bg-indigo-50" : "hover:bg-gray-50"
+            }`}
+          >
+            <AIAvatar size={48} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-gray-900">{AI_NAME}</p>
+              <p className="truncate text-sm text-gray-500">Ask me anything</p>
+            </div>
+          </button>
         )}
-      </div>
 
-      {/* Logout Button */}
-      <div className="p-4 border-t border-gray-200 bg-white sticky bottom-0">
+        {filteredChats.map((chat) => (
+          <ChatRow
+            key={chat.key}
+            chat={chat}
+            active={selectedKey === chat.key}
+            onSelect={onSelectChat}
+          />
+        ))}
+
+        {filteredChats.length === 0 && (
+          <div className="px-6 py-12 text-center">
+            {term ? (
+              <p className="text-sm text-gray-500">No chats match &quot;{searchTerm}&quot;</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-gray-700">No conversations yet</p>
+                <p className="mt-1 text-xs text-gray-400">Add a friend to start chatting.</p>
+                <button onClick={onOpenFriends} className="btn-primary mt-4 px-4 py-2">
+                  <FiUserPlus /> Find friends
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </nav>
+
+      <footer className="flex items-center gap-3 border-t border-gray-100 px-4 py-3">
         <button
-          onClick={handleLogout}
-          className="w-full py-2.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors flex items-center justify-center gap-2 font-medium"
+          onClick={onOpenSettings}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
         >
-          <FiLogOut />
-          Logout
+          <img src={me.avatar} alt="" className="h-9 w-9 rounded-full object-cover" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-gray-900">{me.name}</p>
+            <p className="truncate text-xs text-gray-400">{me.username}</p>
+          </div>
         </button>
-      </div>
+        <Link to="/admin" className="icon-btn" title="Admin panel">
+          <FiShield />
+        </Link>
+        <button onClick={logout} className="icon-btn hover:text-red-500" title="Log out">
+          <FiLogOut />
+        </button>
+      </footer>
     </div>
   );
 };
