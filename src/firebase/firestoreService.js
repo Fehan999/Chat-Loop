@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   increment,
+  limit,
   limitToLast,
   onSnapshot,
   orderBy,
@@ -103,6 +104,16 @@ export const updateUserProfile = async (userId, data) => {
     console.error("Error updating profile:", error);
     return false;
   }
+};
+
+// the 4 digit ids aren't guaranteed unique, so this can return a few people
+export const findUsersByUniqueId = async (uniqueId, excludeId) => {
+  const snap = await getDocs(
+    query(usersCollection, where("uniqueId", "==", uniqueId.trim()), limit(10))
+  );
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((u) => u.id !== excludeId && u.email);
 };
 
 // chats
@@ -292,7 +303,14 @@ export const deleteConversation = async (chatId, userId) => {
   }
 };
 
-// app wide announcement banner, edited from the admin panel
+// remembers the last announcement this person has seen, so it pops up only once
+// on every device they use
+export const markAnnouncementSeen = (userId, version) =>
+  updateDoc(getUserDoc(userId), { seenAnnouncement: version }).catch((error) =>
+    console.error("Couldn't save announcement as seen:", error)
+  );
+
+// app wide announcement, edited from the admin panel
 export const listenToAnnouncement = (callback) =>
   onSnapshot(
     doc(db, "appConfig", "announcement"),

@@ -18,6 +18,10 @@ export const resolvePresence = (profile) => {
   return { status, lastSeen };
 };
 
+// the admin panel shows real presence, even for people who hide it from friends
+export const adminPresence = (profile) =>
+  resolvePresence(profile ? { ...profile, showActiveStatus: true } : profile);
+
 export const formatLastSeen = (lastSeen) => {
   if (!lastSeen) return "a while ago";
   return formatRelativeTime(lastSeen);

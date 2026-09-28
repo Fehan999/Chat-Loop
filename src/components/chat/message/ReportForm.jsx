@@ -11,15 +11,16 @@ const DEFAULT_REASONS = [
   "Other",
 ];
 
-// shared by message and user reports, the parent decides what gets saved
-const ReportForm = ({ reasons = DEFAULT_REASONS, onSubmit, onClose }) => {
+// shared by message and user reports, the parent decides what gets saved.
+// ready=false keeps the button off until the parent has what it needs
+const ReportForm = ({ reasons = DEFAULT_REASONS, ready = true, onSubmit, onClose }) => {
   const [reason, setReason] = useState("");
   const [details, setDetails] = useState("");
   const [sending, setSending] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!reason) return;
+    if (!reason || !ready) return;
     setSending(true);
     await onSubmit({ reason, details: details.trim() });
     setSending(false);
@@ -55,7 +56,11 @@ const ReportForm = ({ reasons = DEFAULT_REASONS, onSubmit, onClose }) => {
         <button type="button" onClick={onClose} className="btn-secondary flex-1 py-2.5">
           Cancel
         </button>
-        <button type="submit" disabled={!reason || sending} className="btn-danger flex-1 py-2.5">
+        <button
+          type="submit"
+          disabled={!reason || !ready || sending}
+          className="btn-danger flex-1 py-2.5"
+        >
           <FiFlag /> {sending ? "Sending..." : "Report"}
         </button>
       </div>

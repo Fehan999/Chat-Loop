@@ -279,7 +279,7 @@ const AdminPage = ({ user }) => {
               <span>
                 <strong className="font-semibold">You are logged in as guest.</strong> You can see
                 the live dashboard, but you can&apos;t edit, delete, suspend or take any action.
-                Emails are partly hidden and message counts are admin only.
+                Emails are partly hidden for privacy.
               </span>
             </p>
           )}

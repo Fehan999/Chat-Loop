@@ -86,6 +86,21 @@ export const fetchCounts = async () => {
   return { conversations: chats.data().count, messages: messages.data().count };
 };
 
+// the admin's latest counts are saved here so the guest login can show them
+// without being able to read anyone's chats
+export const saveStats = (counts) =>
+  setDoc(doc(db, "appConfig", "stats"), { ...counts, updatedAt: serverTimestamp() });
+
+export const listenToStatsDoc = (callback) =>
+  onSnapshot(
+    doc(db, "appConfig", "stats"),
+    (snap) => {
+      const data = snap.exists() ? snap.data() : null;
+      callback(data ? { ...data, updatedAt: toDate(data.updatedAt) } : null);
+    },
+    () => callback(null)
+  );
+
 export const updateUserAsAdmin = (userId, patch) =>
   updateDoc(doc(db, "users", userId), { ...patch, updatedAt: serverTimestamp() });
 
@@ -116,8 +131,9 @@ export const listenToAnnouncementDoc = (callback) =>
     () => callback({ text: "", active: false })
   );
 
-export const saveAnnouncement = ({ text, active }) =>
+export const saveAnnouncement = ({ title, text, active }) =>
   setDoc(doc(db, "appConfig", "announcement"), {
+    title: title.trim(),
     text: text.trim(),
     active,
     updatedAt: serverTimestamp(),

@@ -23,7 +23,7 @@ import { avatarFor, displayName, formatUsername } from "../../utils/userDisplay"
 import SplashScreen from "../common/SplashScreen";
 import AddFriendPage from "./add_friend/AddFriendPage";
 import AIChatArea from "./ai/AIChatArea";
-import AnnouncementBanner from "./AnnouncementBanner";
+import AnnouncementPopup from "./AnnouncementPopup";
 import BannedScreen from "./BannedScreen";
 import CallInterface from "./call/CallInterface";
 import IncomingCallModal from "./call/IncomingCallModal";
@@ -302,9 +302,9 @@ const ChatDashboard = ({ user }) => {
     callService.rejectCall(call.id);
   };
 
-  const submitUserReport = async ({ reason, details }) => {
-    const ok = await reportUser(reportTarget, uid, reason, details);
-    if (ok) toast.success("Thanks, we'll take a look.");
+  const submitUserReport = async (report) => {
+    const ok = await reportUser(reportTarget, uid, report);
+    if (ok) toast.success("Thanks, our team will review it.");
     else toast.error("Couldn't send the report.");
     setReportTarget(null);
   };
@@ -316,7 +316,11 @@ const ChatDashboard = ({ user }) => {
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-gray-50">
-      <AnnouncementBanner announcement={announcement} />
+      <AnnouncementPopup
+        announcement={announcement}
+        seenVersion={userData?.seenAnnouncement}
+        userId={uid}
+      />
 
       <div className="flex min-h-0 flex-1">
         <div
@@ -367,7 +371,14 @@ const ChatDashboard = ({ user }) => {
 
       <AnimatePresence>
         {panel === "settings" && userData && (
-          <SettingsPanel user={{ ...userData, uid, email: user.email }} onClose={() => setPanel(null)} />
+          <SettingsPanel
+            user={{ ...userData, uid, email: user.email }}
+            onClose={() => setPanel(null)}
+            onReportUser={(target) => {
+              setPanel(null);
+              setReportTarget({ ...target, chatId: chatIdFor(uid, target.userId) });
+            }}
+          />
         )}
       </AnimatePresence>
 
@@ -394,6 +405,7 @@ const ChatDashboard = ({ user }) => {
       <ReportUserModal
         isOpen={!!reportTarget}
         user={reportTarget}
+        messages={reportTarget?.chatId === activeChatId ? messages : NO_MESSAGES}
         onClose={() => setReportTarget(null)}
         onSubmit={submitUserReport}
       />

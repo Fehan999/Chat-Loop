@@ -111,7 +111,7 @@ Open `/admin`. It starts with a login screen and there are two ways in:
 in `src/constants.js`). The email has to be verified: Google sign-in is verified automatically,
 email/password accounts get a "Send email" button on the admin page. Admins can edit profiles,
 suspend accounts (they get a suspended screen on their next load), work through reports, remove
-reported messages and publish a banner that shows at the top of everyone's chat screen.
+reported messages and send announcements.
 
 **Guest login** - the credentials are shown right on the login screen
 (`GUEST_EMAIL` / `GUEST_PASSWORD` in `src/constants.js`). The guest sees the live dashboard,
@@ -125,6 +125,21 @@ the UI: the guest account can't write anything anywhere. If you change any of th
 change them in both places and redeploy the rules.
 
 Normal users don't get an admin button in the app, only admin accounts see it in the sidebar.
+
+**Overview** - every number is real. Users, online now, active today, sign-ups, friendships,
+reports and suspensions come straight from the live users and reports data. Messages and
+conversations use Firestore count queries; the admin's browser re-counts every few minutes and
+saves the result to `appConfig/stats`, which is what the guest login reads.
+
+**Reports** - when someone reports a user they either pick one of that person's messages as proof
+(it shows up in the report and the admin can remove it), or report the whole account by its ID.
+Settings also has a "Report a user" box to find someone by their 4 digit ID, for people you don't
+have a chat with.
+
+**Announcements** - a title and a message. It drops in like a phone notification (swipe it up to
+dismiss) and each person sees it once: the version they've seen is saved on their profile as
+`seenAnnouncement`, so it doesn't come back on another device either. Changing the wording sends
+it again as a new announcement.
 
 ---
 
@@ -181,7 +196,8 @@ write, add a function to the matching file in `src/firebase/` and call that.
 | `calls/{callId}` + `signals/` | call state and the WebRTC offer/answer/ice messages |
 | `aiChats/{uid}/messages/{id}` | `role` (user / model), `text` |
 | `reports/{id}` | message or user reports for the admin panel |
-| `appConfig/announcement` | `text`, `active` |
+| `appConfig/announcement` | `title`, `text`, `active` |
+| `appConfig/stats` | message and conversation counts saved by the admin panel |
 
 Chat ids are just both uids sorted and joined with `_`, so you can always work out the id
 of a conversation without a query (`chatIdFor()` in `firestoreService.js`).

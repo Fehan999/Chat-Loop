@@ -2,7 +2,7 @@ import { AnimatePresence } from "framer-motion";
 import { useMemo, useState } from "react";
 import { FiChevronLeft, FiChevronRight, FiEdit2, FiLock, FiSearch, FiSlash } from "react-icons/fi";
 import { formatDate, formatRelativeTime } from "../../utils/dateUtils";
-import { getStatusDotClass, resolvePresence } from "../../utils/statusHelper";
+import { adminPresence, getStatusDotClass } from "../../utils/statusHelper";
 import { maskEmail } from "../../firebase/adminService";
 import { avatarFor, formatUsername } from "../../utils/userDisplay";
 import FormField from "../auth/FormField";
@@ -140,7 +140,7 @@ const UsersSection = ({ users, canEdit, lockedMessage, onSaveUser }) => {
     const term = search.trim().toLowerCase();
     return users
       .filter((u) => {
-        if (filter === "online" && resolvePresence(u).status !== "online") return false;
+        if (filter === "online" && adminPresence(u).status !== "online") return false;
         if (filter === "banned" && !u.banned) return false;
         if (!term) return true;
         // the guest only sees masked emails, so it can't search by them either
@@ -205,7 +205,7 @@ const UsersSection = ({ users, canEdit, lockedMessage, onSaveUser }) => {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {rows.map((user) => {
-              const presence = resolvePresence(user);
+              const presence = adminPresence(user);
               return (
                 <tr key={user.id} className="hover:bg-gray-50/60">
                   <td className="px-4 py-3">

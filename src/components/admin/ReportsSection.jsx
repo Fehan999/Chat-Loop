@@ -1,6 +1,16 @@
 import { useState } from "react";
-import { FiCheck, FiLock, FiMessageSquare, FiSlash, FiTrash2, FiUser, FiX } from "react-icons/fi";
+import {
+  FiCheck,
+  FiHash,
+  FiLock,
+  FiMessageSquare,
+  FiSlash,
+  FiTrash2,
+  FiUser,
+  FiX,
+} from "react-icons/fi";
 import { formatRelativeTime } from "../../utils/dateUtils";
+import { formatUsername } from "../../utils/userDisplay";
 
 const TABS = [
   { id: "pending", label: "Pending" },
@@ -13,6 +23,14 @@ const STATUS_STYLE = {
   pending: "bg-amber-50 text-amber-700",
   resolved: "bg-emerald-50 text-emerald-700",
   dismissed: "bg-gray-100 text-gray-500",
+};
+
+// message reports come from a message's menu, user reports either point at one
+// of that person's messages or report the whole account by id
+const kindOf = (report) => {
+  if (report.type !== "user") return { label: "Message", icon: FiMessageSquare };
+  if (report.messageId) return { label: "User · with message", icon: FiUser };
+  return { label: "Account · by ID", icon: FiHash };
 };
 
 const ReportsSection = ({ reports, users, canEdit, actions }) => {
@@ -67,13 +85,16 @@ const ReportsSection = ({ reports, users, canEdit, actions }) => {
           report.reportedUserName || nameOf(report.reportedUserId) || "Unknown user";
         const reporterName = nameOf(report.reportedBy) || "someone";
         const reportedUser = users.find((u) => u.id === report.reportedUserId);
+        const kind = kindOf(report);
+        const reportedId = report.reportedUserUniqueId || reportedUser?.uniqueId;
+        const reportedUsername = report.reportedUsername || reportedUser?.username;
 
         return (
           <div key={report.id} className="card p-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-600">
-                {report.type === "user" ? <FiUser /> : <FiMessageSquare />}
-                {report.type === "user" ? "User" : "Message"}
+                <kind.icon />
+                {kind.label}
               </span>
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize ${STATUS_STYLE[status] || STATUS_STYLE.pending}`}
@@ -90,8 +111,21 @@ const ReportsSection = ({ reports, users, canEdit, actions }) => {
               <span className="font-medium text-gray-700">{reportedName}</span> reported by{" "}
               {reporterName}
             </p>
+            {(reportedId || reportedUsername) && (
+              <p className="mt-0.5 text-xs text-gray-400">
+                {[
+                  reportedUsername && formatUsername(reportedUsername),
+                  reportedId && `ID ${reportedId}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
             {report.messageText && (
-              <blockquote className="mt-3 rounded-xl border-l-4 border-indigo-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+              <blockquote
+                title="Reported message"
+                className="mt-3 rounded-xl border-l-4 border-indigo-200 bg-gray-50 px-3 py-2 text-sm text-gray-700"
+              >
                 {report.messageText}
               </blockquote>
             )}
@@ -128,7 +162,7 @@ const ReportsSection = ({ reports, users, canEdit, actions }) => {
                   {lockIcon} Reopen
                 </button>
               )}
-              {report.type === "message" && report.chatId && report.messageId && (
+              {report.chatId && report.messageId && (
                 <button
                   onClick={run(`${report.id}-remove`, () => actions.removeMessage(report))}
                   disabled={!!busy}

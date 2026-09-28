@@ -7,6 +7,7 @@ import {
   FiCamera,
   FiCopy,
   FiEye,
+  FiFlag,
   FiLock,
   FiLogOut,
   FiUser,
@@ -28,6 +29,7 @@ import { uploadProfileImage } from "../../utils/supabase";
 import { avatarFor, formatUsername } from "../../utils/userDisplay";
 import FormField from "../auth/FormField";
 import Toggle from "../common/Toggle";
+import ReportById from "./ReportById";
 
 const Section = ({ icon: Icon, title, action, children }) => (
   <section className="card overflow-hidden">
@@ -51,7 +53,7 @@ const SettingRow = ({ title, description, children }) => (
   </div>
 );
 
-const SettingsPanel = ({ user, onClose }) => {
+const SettingsPanel = ({ user, onClose, onReportUser }) => {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -319,6 +321,10 @@ const SettingsPanel = ({ user, onClose }) => {
             >
               <FiVolume2 /> Test sound
             </button>
+          </Section>
+
+          <Section icon={FiFlag} title="Report a user">
+            <ReportById currentUserId={user.uid} onReport={onReportUser} />
           </Section>
 
           <Section icon={FiLock} title="Security">

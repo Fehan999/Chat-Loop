@@ -1,9 +1,22 @@
-import { FiAlertTriangle, FiMessageSquare, FiUserCheck, FiUsers } from "react-icons/fi";
-import { formatRelativeTime } from "../../utils/dateUtils";
-import { resolvePresence } from "../../utils/statusHelper";
+import {
+  FiActivity,
+  FiAlertTriangle,
+  FiCheckCircle,
+  FiHeart,
+  FiMessageCircle,
+  FiMessageSquare,
+  FiSlash,
+  FiUserCheck,
+  FiUserPlus,
+  FiUsers,
+} from "react-icons/fi";
 import { maskEmail } from "../../firebase/adminService";
+import { formatRelativeTime } from "../../utils/dateUtils";
+import { adminPresence } from "../../utils/statusHelper";
 import { avatarFor } from "../../utils/userDisplay";
 import SignupsChart from "./SignupsChart";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // 1284 -> "1,284", 18934 -> "18.9K"
 const compact = (value) => {
@@ -14,45 +27,138 @@ const compact = (value) => {
   );
 };
 
-const StatTile = ({ icon: Icon, label, value, hint }) => (
+const StatTile = ({ icon: Icon, label, value, hint, tone = "indigo" }) => (
   <div className="card p-4">
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between gap-2">
       <p className="text-sm text-gray-500">{label}</p>
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-500">
+      <span
+        className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${
+          tone === "red"
+            ? "bg-red-50 text-red-500"
+            : tone === "amber"
+              ? "bg-amber-50 text-amber-600"
+              : tone === "emerald"
+                ? "bg-emerald-50 text-emerald-600"
+                : "bg-indigo-50 text-indigo-500"
+        }`}
+      >
         <Icon />
       </span>
     </div>
-    <p className="mt-2 text-2xl font-semibold text-gray-900">{compact(value)}</p>
-    {hint && <p className="mt-0.5 text-xs text-gray-400">{hint}</p>}
+    <p className="mt-2 text-2xl font-semibold tabular-nums text-gray-900">{compact(value)}</p>
+    {hint && <p className="mt-0.5 truncate text-xs text-gray-400">{hint}</p>}
   </div>
 );
 
+// everything here is worked out from the live users/reports listeners, plus the
+// chat and message counts from firestore's count queries
+const buildStats = (users, reports) => {
+  const now = Date.now();
+  const within = (date, ms) => !!date && now - date.getTime() < ms;
+
+  let online = 0;
+  let activeToday = 0;
+  let newToday = 0;
+  let newThisWeek = 0;
+  let suspended = 0;
+  let friendLinks = 0;
+
+  users.forEach((user) => {
+    const { status, lastSeen } = adminPresence(user);
+    if (status === "online") online += 1;
+    if (status !== "offline" || within(lastSeen, DAY_MS)) activeToday += 1;
+    if (within(user.createdAt, DAY_MS)) newToday += 1;
+    if (within(user.createdAt, 7 * DAY_MS)) newThisWeek += 1;
+    if (user.banned) suspended += 1;
+    friendLinks += user.friends?.length || 0;
+  });
+
+  const statusOf = (r) => r.status || "pending";
+  return {
+    online,
+    activeToday,
+    newToday,
+    newThisWeek,
+    suspended,
+    // every friendship is stored on both people
+    friendships: Math.round(friendLinks / 2),
+    pending: reports.filter((r) => statusOf(r) === "pending"),
+    resolved: reports.filter((r) => statusOf(r) === "resolved").length,
+    reportsThisWeek: reports.filter((r) => within(r.createdAt, 7 * DAY_MS)).length,
+  };
+};
+
 const OverviewSection = ({ users, reports, counts, canEdit, onOpen }) => {
-  const online = users.filter((u) => resolvePresence(u).status === "online").length;
-  const pending = reports.filter((r) => r.status === "pending");
+  const stats = buildStats(users, reports);
   const newest = [...users]
     .filter((u) => u.createdAt)
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 5);
+  const averagePerChat =
+    counts.messages && counts.conversations
+      ? Math.round(counts.messages / counts.conversations)
+      : null;
+  const countsHint = counts.updatedAt
+    ? `counted ${formatRelativeTime(counts.updatedAt)}`
+    : "waiting for the first count";
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={FiUsers} label="Total users" value={users.length} />
-        <StatTile icon={FiUserCheck} label="Online now" value={online} />
+        <StatTile
+          icon={FiUsers}
+          label="Total users"
+          value={users.length}
+          hint={`${stats.newThisWeek} joined this week`}
+        />
+        <StatTile
+          icon={FiUserCheck}
+          label="Online now"
+          value={stats.online}
+          tone="emerald"
+          hint={`${stats.activeToday} active in the last 24h`}
+        />
         <StatTile
           icon={FiMessageSquare}
           label="Messages sent"
           value={counts.messages}
-          hint={
-            !canEdit
-              ? "admin only"
-              : counts.conversations !== null
-                ? `across ${compact(counts.conversations)} chats`
-                : null
-          }
+          hint={countsHint}
         />
-        <StatTile icon={FiAlertTriangle} label="Open reports" value={pending.length} />
+        <StatTile
+          icon={FiMessageCircle}
+          label="Conversations"
+          value={counts.conversations}
+          hint={averagePerChat !== null ? `about ${averagePerChat} messages each` : countsHint}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile
+          icon={FiUserPlus}
+          label="New today"
+          value={stats.newToday}
+          hint="sign-ups in the last 24h"
+        />
+        <StatTile
+          icon={FiHeart}
+          label="Friendships"
+          value={stats.friendships}
+          hint="accepted friend requests"
+        />
+        <StatTile
+          icon={FiAlertTriangle}
+          label="Open reports"
+          value={stats.pending.length}
+          tone="amber"
+          hint={`${stats.reportsThisWeek} reported this week`}
+        />
+        <StatTile
+          icon={FiSlash}
+          label="Suspended"
+          value={stats.suspended}
+          tone="red"
+          hint={`${stats.resolved} reports resolved`}
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
@@ -90,7 +196,9 @@ const OverviewSection = ({ users, reports, counts, canEdit, onOpen }) => {
 
       <div className="card p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-900">Waiting for review</h3>
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <FiActivity className="text-indigo-500" /> Waiting for review
+          </h3>
           <button
             onClick={() => onOpen("reports")}
             className="text-xs font-medium text-indigo-500 hover:text-indigo-600"
@@ -98,14 +206,16 @@ const OverviewSection = ({ users, reports, counts, canEdit, onOpen }) => {
             Open reports
           </button>
         </div>
-        {pending.length === 0 ? (
-          <p className="text-sm text-gray-400">Nothing to review. Nice.</p>
+        {stats.pending.length === 0 ? (
+          <p className="flex items-center gap-2 text-sm text-gray-400">
+            <FiCheckCircle className="text-emerald-500" /> Nothing to review.
+          </p>
         ) : (
           <ul className="divide-y divide-gray-100">
-            {pending.slice(0, 4).map((report) => (
+            {stats.pending.slice(0, 5).map((report) => (
               <li key={report.id} className="flex items-center gap-3 py-2.5 text-sm">
                 <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-                  {report.type === "user" ? "User" : "Message"}
+                  {report.type === "user" ? (report.messageId ? "User" : "Account") : "Message"}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-gray-700">{report.reason}</span>
                 <span className="text-xs text-gray-400">

@@ -8,6 +8,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { deleteFilesFromSupabase } from "../utils/supabase";
+import { previewFor } from "./firestoreService";
 import { db } from "./config";
 
 const messageDoc = (chatId, messageId) => doc(db, "messages", chatId, "messages", messageId);
@@ -124,14 +125,26 @@ export const reportMessage = async (chatId, message, userId, reason) => {
   }
 };
 
-export const reportUser = async (reportedUser, userId, reason, details) => {
+// a user report either points at one of their messages as proof, or reports the
+// whole account by its id so the team can go through it
+export const reportUser = async (reportedUser, userId, { reason, details, message, chatId }) => {
+  const profile = reportedUser.profile || reportedUser;
   try {
     await addDoc(collection(db, "reports"), {
       type: "user",
       reportedUserId: reportedUser.userId || reportedUser.id,
-      reportedUserName: reportedUser.name || "",
+      reportedUserName: reportedUser.name || profile.name || "",
+      reportedUserUniqueId: profile.uniqueId || "",
+      reportedUsername: profile.username || "",
       reportedBy: userId,
       reason: details ? `${reason} - ${details}` : reason,
+      ...(message
+        ? {
+            chatId,
+            messageId: message.id,
+            messageText: message.text || previewFor("", message.attachments),
+          }
+        : {}),
       status: "pending",
       createdAt: serverTimestamp(),
     });
