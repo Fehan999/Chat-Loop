@@ -1,187 +1,118 @@
-import React, { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { FiMail, FiX, FiSend, FiCheckCircle } from "react-icons/fi";
-import { sendPasswordResetEmail } from "firebase/auth"; // Only import once
+import { sendPasswordResetEmail } from "firebase/auth";
+import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { FiCheckCircle, FiMail, FiSend, FiX } from "react-icons/fi";
 import { auth } from "../../firebase/config";
-import ReactDOM from "react-dom";
+import { authErrorMessage } from "./authErrors";
+import FormField from "./FormField";
 
-const ForgotPasswordModal = ({ isOpen, onClose }) => {
-  const [email, setEmail] = useState("");
+// rendered in a portal so the auth card animation doesn't clip it
+const ForgotPasswordModal = ({ isOpen, onClose, initialEmail = "" }) => {
+  const [email, setEmail] = useState(initialEmail);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
+  const [sent, setSent] = useState(false);
 
-  const handleResetPassword = async (e) => {
-    e.preventDefault();
-    if (!email) {
-      setError("Please enter your email address");
-      return;
+  useEffect(() => {
+    if (isOpen) {
+      setEmail(initialEmail);
+      setError("");
+      setSent(false);
     }
+  }, [isOpen, initialEmail]);
 
-    if (!email.includes("@") || !email.includes(".")) {
-      setError("Please enter a valid email address");
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
+      setError("Please enter a valid email address.");
       return;
     }
 
     setLoading(true);
     setError("");
-    setSuccess(false);
-
     try {
-      // Don't pass actionCodeSettings - let Firebase use the URL from console
-      await sendPasswordResetEmail(auth, email);
-      setSuccess(true);
-
-      setTimeout(() => {
-        onClose();
-        setEmail("");
-        setSuccess(false);
-      }, 3000);
-    } catch (error) {
-      console.error("Password reset error:", error);
-      switch (error.code) {
-        case "auth/user-not-found":
-          setError("No account found with this email address");
-          break;
-        case "auth/invalid-email":
-          setError("Invalid email address format");
-          break;
-        case "auth/too-many-requests":
-          setError("Too many requests. Please try again later");
-          break;
-        default:
-          setError("Failed to send reset email. Please try again");
-      }
+      await sendPasswordResetEmail(auth, email.trim());
+      setSent(true);
+    } catch (err) {
+      setError(authErrorMessage(err, "Couldn't send the reset email. Please try again."));
     } finally {
       setLoading(false);
     }
   };
 
-  // Create portal to render modal at root level
-  return ReactDOM.createPortal(
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
-        <>
-          {/* Backdrop - fixed position */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/50 p-4 backdrop-blur-sm"
+        >
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999]"
-            style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0 }}
-          />
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Reset your password</h3>
+              <button onClick={onClose} className="icon-btn" aria-label="Close">
+                <FiX />
+              </button>
+            </div>
 
-          {/* Modal Container - centered */}
-          <div className="fixed inset-0 flex items-center justify-center z-[10000] p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Header */}
-              <div className="flex justify-between items-center p-6 border-b border-gray-100">
-                <h3 className="text-2xl font-bold bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent">
-                  Reset Password
-                </h3>
-                <button
-                  onClick={onClose}
-                  className="text-gray-400 hover:text-gray-600 transition-colors p-1"
-                >
-                  <FiX className="text-2xl" />
+            {sent ? (
+              <div className="py-4 text-center">
+                <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50">
+                  <FiCheckCircle className="text-2xl text-emerald-500" />
+                </div>
+                <p className="font-medium text-gray-900">Check your inbox</p>
+                <p className="mt-1 text-sm text-gray-500">
+                  If an account exists for{" "}
+                  <span className="font-medium text-gray-700">{email}</span>, a reset link is on its
+                  way.
+                </p>
+                <button onClick={onClose} className="btn-secondary mt-6 w-full">
+                  Back to login
                 </button>
               </div>
-
-              {/* Content */}
-              <div className="p-6">
-                {!success ? (
-                  <form onSubmit={handleResetPassword}>
-                    <p className="text-gray-600 mb-6">
-                      Enter your email address and we'll send you a link to
-                      reset your password.
-                    </p>
-
-                    {error && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="bg-red-50 text-red-500 text-sm p-3 rounded-xl border border-red-200 mb-4"
-                      >
-                        {error}
-                      </motion.div>
-                    )}
-
-                    <div className="relative mb-6">
-                      <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
-                        <FiMail className="text-xl" />
-                      </div>
-                      <input
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="Enter your email address"
-                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-amber-400 focus:ring-2 focus:ring-amber-200 transition-all outline-none"
-                        required
-                        disabled={loading}
-                        autoFocus
-                      />
-                    </div>
-
-                    <motion.button
-                      whileHover={{ scale: loading ? 1 : 1.02 }}
-                      whileTap={{ scale: loading ? 1 : 0.98 }}
-                      type="submit"
-                      disabled={loading}
-                      className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-medium rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {loading ? (
-                        <>
-                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          Sending...
-                        </>
-                      ) : (
-                        <>
-                          Send Reset Link
-                          <FiSend className="text-lg" />
-                        </>
-                      )}
-                    </motion.button>
-                  </form>
-                ) : (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="text-center py-6"
-                  >
-                    <motion.div
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{ type: "spring", delay: 0.2 }}
-                      className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4"
-                    >
-                      <FiCheckCircle className="text-4xl text-green-500" />
-                    </motion.div>
-                    <h4 className="text-xl font-semibold text-gray-800 mb-2">
-                      Check Your Email
-                    </h4>
-                    <p className="text-gray-600 mb-2">
-                      We've sent a password reset link to
-                    </p>
-                    <p className="font-semibold text-amber-600 bg-amber-50 px-3 py-1 rounded-lg inline-block">
-                      {email}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-4">
-                      The modal will close automatically in 3 seconds...
-                    </p>
-                  </motion.div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <p className="text-sm text-gray-500">
+                  Enter the email you signed up with and we&apos;ll send you a link to set a new
+                  password.
+                </p>
+                {error && (
+                  <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-600">
+                    {error}
+                  </div>
                 )}
-              </div>
-            </motion.div>
-          </div>
-        </>
+                <FormField
+                  icon={FiMail}
+                  type="email"
+                  placeholder="Email address"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  autoFocus
+                />
+                <button type="submit" disabled={loading} className="btn-primary w-full">
+                  {loading ? (
+                    "Sending..."
+                  ) : (
+                    <>
+                      Send reset link <FiSend />
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+          </motion.div>
+        </motion.div>
       )}
     </AnimatePresence>,
     document.body
