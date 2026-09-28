@@ -1,6 +1,14 @@
 import { AnimatePresence } from "framer-motion";
 import { useMemo, useState } from "react";
-import { FiChevronLeft, FiChevronRight, FiEdit2, FiLock, FiSearch, FiSlash } from "react-icons/fi";
+import {
+  FiChevronLeft,
+  FiChevronRight,
+  FiEdit2,
+  FiLock,
+  FiRotateCcw,
+  FiSearch,
+  FiSlash,
+} from "react-icons/fi";
 import { formatDate, formatRelativeTime } from "../../utils/dateUtils";
 import { adminPresence, getStatusDotClass } from "../../utils/statusHelper";
 import { maskEmail } from "../../firebase/adminService";
@@ -17,7 +25,7 @@ const FILTERS = [
 ];
 
 // details + edit form. the guest can open it to look around, saving is admin only
-const EditUserModal = ({ user, canEdit, lockedMessage, onSave, onClose }) => {
+const EditUserModal = ({ user, canEdit, lockedMessage, onSave, onUnsuspend, onClose }) => {
   const [form, setForm] = useState({
     name: user.name || "",
     bio: user.bio || "",
@@ -30,6 +38,13 @@ const EditUserModal = ({ user, canEdit, lockedMessage, onSave, onClose }) => {
   const save = async () => {
     setSaving(true);
     const ok = await onSave(user, form);
+    setSaving(false);
+    if (ok) onClose();
+  };
+
+  const unsuspend = async () => {
+    setSaving(true);
+    const ok = await onUnsuspend(user);
     setSaving(false);
     if (ok) onClose();
   };
@@ -48,6 +63,29 @@ const EditUserModal = ({ user, canEdit, lockedMessage, onSave, onClose }) => {
           </p>
         </div>
       </div>
+
+      {user.banned && (
+        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-red-100 bg-red-50 p-3 sm:flex-row sm:items-center">
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="flex items-center gap-1.5 font-medium text-red-700">
+              <FiSlash /> Suspended
+              {user.bannedAt && (
+                <span className="font-normal text-red-500">
+                  · {formatRelativeTime(user.bannedAt)}
+                </span>
+              )}
+            </p>
+            {user.banReason && <p className="mt-0.5 text-red-600">{user.banReason}</p>}
+          </div>
+          <button
+            onClick={unsuspend}
+            disabled={saving}
+            className="btn-secondary whitespace-nowrap bg-white px-3 py-2 text-emerald-700 hover:bg-emerald-50"
+          >
+            {canEdit ? <FiRotateCcw /> : <FiLock />} Unsuspend
+          </button>
+        </div>
+      )}
 
       <fieldset disabled={!canEdit} className="space-y-3">
         <label className="block text-xs font-medium text-gray-500">
@@ -130,7 +168,7 @@ const EditUserModal = ({ user, canEdit, lockedMessage, onSave, onClose }) => {
   );
 };
 
-const UsersSection = ({ users, canEdit, lockedMessage, onSaveUser }) => {
+const UsersSection = ({ users, canEdit, lockedMessage, onSaveUser, onUnsuspend }) => {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(0);
@@ -191,7 +229,55 @@ const UsersSection = ({ users, canEdit, lockedMessage, onSaveUser }) => {
         </div>
       </div>
 
-      <div className="thin-scroll overflow-x-auto">
+      {/* phones get a simple list, the table needs more width than a phone has */}
+      <ul className="divide-y divide-gray-100 sm:hidden">
+        {rows.map((user) => {
+          const presence = adminPresence(user);
+          return (
+            <li key={user.id} className="flex items-center gap-3 px-4 py-3">
+              <div className="relative flex-shrink-0">
+                <img src={avatarFor(user)} alt="" className="h-10 w-10 rounded-full object-cover" />
+                <span
+                  className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${getStatusDotClass(presence.status)}`}
+                />
+              </div>
+              <button onClick={() => setEditing(user)} className="min-w-0 flex-1 text-left">
+                <p className="flex items-center gap-1.5 truncate text-sm font-medium text-gray-900">
+                  <span className="truncate">{user.name}</span>
+                  {user.banned && <FiSlash className="flex-shrink-0 text-red-500" size={12} />}
+                </p>
+                <p className="truncate text-xs text-gray-400">
+                  {canEdit ? user.email : maskEmail(user.email)}
+                </p>
+                <p className="text-xs text-gray-400">
+                  ID {user.uniqueId || "—"} · {user.friends?.length || 0} friends
+                </p>
+              </button>
+              {user.banned ? (
+                <button
+                  onClick={() => onUnsuspend(user)}
+                  className="flex-shrink-0 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700"
+                >
+                  Unsuspend
+                </button>
+              ) : (
+                <button
+                  onClick={() => setEditing(user)}
+                  className="icon-btn flex-shrink-0"
+                  aria-label="View / edit"
+                >
+                  <FiEdit2 />
+                </button>
+              )}
+            </li>
+          );
+        })}
+        {rows.length === 0 && (
+          <li className="px-4 py-10 text-center text-sm text-gray-400">No users match that.</li>
+        )}
+      </ul>
+
+      <div className="thin-scroll hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-400">
             <tr>
@@ -245,7 +331,16 @@ const UsersSection = ({ users, canEdit, lockedMessage, onSaveUser }) => {
                     {user.friends?.length || 0}
                   </td>
                   <td className="px-4 py-3 text-gray-600">{formatDate(user.createdAt) || "—"}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    {user.banned && (
+                      <button
+                        onClick={() => onUnsuspend(user)}
+                        className="mr-1 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                        title="Unsuspend"
+                      >
+                        {canEdit ? <FiRotateCcw /> : <FiLock />} Unsuspend
+                      </button>
+                    )}
                     <button
                       onClick={() => setEditing(user)}
                       className="icon-btn"
@@ -300,6 +395,7 @@ const UsersSection = ({ users, canEdit, lockedMessage, onSaveUser }) => {
             canEdit={canEdit}
             lockedMessage={lockedMessage}
             onSave={onSaveUser}
+            onUnsuspend={onUnsuspend}
             onClose={() => setEditing(null)}
           />
         )}

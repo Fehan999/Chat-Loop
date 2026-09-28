@@ -28,6 +28,16 @@ service cloud.firestore {
       return signedIn() && !isGuest();
     }
 
+    // suspended accounts can't message or call anyone, and nobody can reach them
+    function isBanned(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data.get('banned', false) == true;
+    }
+
+    function chatHasBannedUser(chatId) {
+      let people = chatParticipants(chatId);
+      return isBanned(people[0]) || isBanned(people[1]);
+    }
+
     function changedKeys() {
       return request.resource.data.diff(resource.data).affectedKeys();
     }
@@ -65,7 +75,10 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (signedIn() && resource.data.senderId == request.auth.uid)
         || (signedIn() && resource.data.receiverId == request.auth.uid);
-      allow create: if canWrite() && request.resource.data.senderId == request.auth.uid;
+      allow create: if canWrite()
+        && request.resource.data.senderId == request.auth.uid
+        && !isBanned(request.auth.uid)
+        && !isBanned(request.resource.data.receiverId);
       allow update: if canWrite()
         && request.auth.uid in [resource.data.senderId, resource.data.receiverId];
       allow delete: if isAdmin();
@@ -85,6 +98,7 @@ service cloud.firestore {
     match /messages/{chatId}/messages/{messageId} {
       allow read: if inChat(chatId) || isAdmin();
       allow create: if inChat(chatId) && canWrite()
+        && !chatHasBannedUser(chatId)
         && (request.resource.data.senderId == request.auth.uid
           || request.resource.data.get('type', '') == 'call');
       // the sender can edit or delete, the other person can react and mark read
@@ -106,7 +120,10 @@ service cloud.firestore {
 
     match /calls/{callId} {
       allow read: if signedIn();
-      allow create: if canWrite() && request.resource.data.callerId == request.auth.uid;
+      allow create: if canWrite()
+        && request.resource.data.callerId == request.auth.uid
+        && !isBanned(request.auth.uid)
+        && !isBanned(request.resource.data.calleeId);
       allow update: if signedIn()
         && request.auth.uid in [resource.data.callerId, resource.data.calleeId];
 

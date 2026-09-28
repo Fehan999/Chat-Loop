@@ -101,14 +101,22 @@ export const listenToStatsDoc = (callback) =>
     () => callback(null)
   );
 
-export const updateUserAsAdmin = (userId, patch) =>
-  updateDoc(doc(db, "users", userId), { ...patch, updatedAt: serverTimestamp() });
+// unsuspending clears the reason too, so nothing is left over if they're suspended again
+const banFields = (banned, reason = "") => ({
+  banned,
+  banReason: banned ? reason : "",
+  bannedAt: banned ? serverTimestamp() : null,
+});
 
 export const setUserBanned = (userId, banned, reason = "") =>
+  updateDoc(doc(db, "users", userId), banFields(banned, reason));
+
+// profile edits and the suspend switch go out as one write
+export const saveUserAsAdmin = (userId, profile, ban) =>
   updateDoc(doc(db, "users", userId), {
-    banned,
-    banReason: banned ? reason : "",
-    bannedAt: banned ? serverTimestamp() : null,
+    ...profile,
+    ...(ban ? banFields(ban.banned, ban.reason) : {}),
+    updatedAt: serverTimestamp(),
   });
 
 export const updateReportStatus = (reportId, status) =>

@@ -21,6 +21,13 @@ const END_MESSAGES = {
   ended: "Call ended",
 };
 
+// hanging up while the call doc is still being written would leave the other
+// phone ringing, so status changes wait for that write first
+const afterReady = (ready, fn) =>
+  Promise.resolve(ready)
+    .catch(() => {})
+    .then(fn);
+
 // stays mounted for the whole call, minimising only changes the layout so
 // the media elements (and the audio) keep playing
 const CallInterface = ({ call, currentUserId, onClose }) => {
@@ -73,11 +80,19 @@ const CallInterface = ({ call, currentUserId, onClose }) => {
     session.start().catch((error) => {
       console.error("Call setup failed:", error);
       const denied = error.name === "NotAllowedError";
-      callService.missCall(call.id);
-      callService.endCall(call.id, 0);
+      afterReady(call.ready, () => {
+        callService.missCall(call.id);
+        callService.endCall(call.id, 0);
+      });
       finish.current(
         denied ? "Camera or microphone access was blocked" : "Couldn't start the call"
       );
+    });
+
+    // the call doc is written while this screen is already up (see startCall)
+    Promise.resolve(call.ready).catch((error) => {
+      console.error("Call couldn't start:", error);
+      finish.current(error?.message || "Couldn't start the call");
     });
 
     const unsubscribe = callService.listenForCall(call.id, (data) => {
@@ -90,14 +105,19 @@ const CallInterface = ({ call, currentUserId, onClose }) => {
       unsubscribe();
       session.close();
     };
-  }, [call.id, call.isInitiator, call.isVideo, currentUserId]);
+  }, [call.id, call.isInitiator, call.isVideo, call.ready, currentUserId]);
 
   const connected = connection === "connected";
   const showRemoteVideo = call.isVideo && !!remoteStream && connected;
 
   // the video element only exists once we're connected, so this re-runs then
   useEffect(() => {
-    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteStream;
+    const audio = remoteAudioRef.current;
+    if (audio && audio.srcObject !== remoteStream) {
+      audio.srcObject = remoteStream;
+      // autoplay alone is flaky on ios safari, an explicit play() after a tap works
+      if (remoteStream) audio.play().catch(() => {});
+    }
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
   }, [remoteStream, minimized, showRemoteVideo]);
 
@@ -114,16 +134,16 @@ const CallInterface = ({ call, currentUserId, onClose }) => {
     return () => clearInterval(timer);
   }, [connection]);
 
-  const hangUp = async () => {
-    if (callStatus === "calling") {
-      await callService.missCall(call.id);
-    } else {
-      const duration = connectedAtRef.current
-        ? Math.floor((Date.now() - connectedAtRef.current) / 1000)
-        : 0;
-      await callService.endCall(call.id, duration);
-    }
+  // the screen closes right away, the call doc is updated behind it
+  const hangUp = () => {
+    const ringing = callStatus === "calling";
+    const duration = connectedAtRef.current
+      ? Math.floor((Date.now() - connectedAtRef.current) / 1000)
+      : 0;
     finish.current();
+    afterReady(call.ready, () =>
+      ringing ? callService.missCall(call.id) : callService.endCall(call.id, duration)
+    );
   };
 
   const toggleScreenShare = async () => {
@@ -144,7 +164,7 @@ const CallInterface = ({ call, currentUserId, onClose }) => {
       ? "Ringing..."
       : connected
         ? formatDuration(seconds)
-        : connection === "disconnected"
+        : connection === "disconnected" || connection === "reconnecting"
           ? "Reconnecting..."
           : "Connecting...";
   const canShareScreen = call.isVideo && !!navigator.mediaDevices?.getDisplayMedia;
@@ -223,7 +243,7 @@ const CallInterface = ({ call, currentUserId, onClose }) => {
 
         <button
           onClick={() => setMinimized((v) => !v)}
-          className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/30 text-white hover:bg-black/50"
+          className="absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] flex h-9 w-9 items-center justify-center rounded-full bg-black/30 text-white hover:bg-black/50"
           aria-label={minimized ? "Expand call" : "Minimise call"}
         >
           {minimized ? <FiMaximize2 size={14} /> : <FiMinimize2 size={16} />}
@@ -231,7 +251,7 @@ const CallInterface = ({ call, currentUserId, onClose }) => {
       </div>
 
       <div
-        className={`flex items-center justify-center gap-3 ${minimized ? "py-3" : "pb-10 pt-6"}`}
+        className={`flex items-center justify-center gap-3 ${minimized ? "py-3" : "pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-6"}`}
       >
         <button
           onClick={() => setMuted(sessionRef.current?.toggleAudio() ?? false)}

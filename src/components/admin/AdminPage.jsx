@@ -23,7 +23,7 @@ import {
   saveAnnouncement,
   setUserBanned,
   updateReportStatus,
-  updateUserAsAdmin,
+  saveUserAsAdmin,
 } from "../../firebase/adminService";
 import { auth } from "../../firebase/config";
 import { useAdminData } from "../../hooks/useAdminData";
@@ -125,16 +125,25 @@ const AdminPage = ({ user }) => {
       }
     };
 
-  const saveUser = guarded(async (target, form) => {
-    await updateUserAsAdmin(target.id, {
-      name: form.name.trim(),
-      bio: form.bio.trim(),
-      location: form.location.trim(),
-    });
-    if (form.banned !== !!target.banned || (form.banned && form.banReason !== target.banReason)) {
-      await setUserBanned(target.id, form.banned, form.banReason.trim());
-    }
+  const saveUser = guarded((target, form) => {
+    const banChanged =
+      form.banned !== !!target.banned ||
+      (form.banned && form.banReason.trim() !== (target.banReason || ""));
+    return saveUserAsAdmin(
+      target.id,
+      { name: form.name.trim(), bio: form.bio.trim(), location: form.location.trim() },
+      banChanged ? { banned: form.banned, reason: form.banReason.trim() } : null
+    );
   }, "User updated");
+
+  const suspendUser = guarded(
+    (target, reason = "") => setUserBanned(target.id, true, reason),
+    "User suspended"
+  );
+  const unsuspendUser = guarded(
+    (target) => setUserBanned(target.id, false),
+    "User unsuspended, they can use ChatLoop again"
+  );
 
   const reportActions = {
     setStatus: guarded((report, status) => updateReportStatus(report.id, status), "Report updated"),
@@ -142,7 +151,8 @@ const AdminPage = ({ user }) => {
       await removeReportedMessage(report.chatId, report.messageId);
       await updateReportStatus(report.id, "resolved");
     }, "Message removed"),
-    banUser: guarded((target, reason) => setUserBanned(target.id, true, reason), "User suspended"),
+    banUser: suspendUser,
+    unbanUser: unsuspendUser,
   };
 
   const publishAnnouncement = guarded(saveAnnouncement, "Announcement saved");
@@ -299,6 +309,7 @@ const AdminPage = ({ user }) => {
               canEdit={isOwner}
               lockedMessage={GUEST_NOTICE}
               onSaveUser={saveUser}
+              onUnsuspend={unsuspendUser}
             />
           )}
           {section === "reports" && (

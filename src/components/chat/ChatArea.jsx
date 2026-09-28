@@ -7,6 +7,7 @@ import {
   FiInfo,
   FiMoreVertical,
   FiPhone,
+  FiSlash,
   FiTrash2,
   FiVideo,
 } from "react-icons/fi";
@@ -86,7 +87,19 @@ const ChatArea = ({
     }
   };
 
-  const statusText = peerTyping ? "typing..." : getStatusText(chat.status, chat.lastSeen);
+  // suspended accounts stay in the list so friends can see what happened, but
+  // messaging and calling are off (firestore.rules block it too)
+  const suspended = !!chat.suspended;
+  const statusText = suspended
+    ? "Account suspended"
+    : peerTyping
+      ? "typing..."
+      : getStatusText(chat.status, chat.lastSeen);
+  const callTitle = suspended
+    ? "This account is suspended"
+    : callInProgress
+      ? "You're already on a call"
+      : null;
 
   return (
     <div className="flex h-full min-w-0 flex-1">
@@ -115,7 +128,11 @@ const ChatArea = ({
               <h3 className="truncate font-semibold text-gray-900">{chat.name}</h3>
               <p
                 className={`truncate text-xs ${
-                  peerTyping || chat.status === "online" ? "text-emerald-600" : "text-gray-500"
+                  suspended
+                    ? "font-medium text-red-500"
+                    : peerTyping || chat.status === "online"
+                      ? "text-emerald-600"
+                      : "text-gray-500"
                 }`}
               >
                 {statusText}
@@ -126,17 +143,17 @@ const ChatArea = ({
           <div className="flex items-center gap-0.5">
             <button
               onClick={() => onStartCall(false)}
-              disabled={callInProgress}
+              disabled={callInProgress || suspended}
               className="icon-btn"
-              title={callInProgress ? "You're already on a call" : "Voice call"}
+              title={callTitle || "Voice call"}
             >
               <FiPhone className="text-lg" />
             </button>
             <button
               onClick={() => onStartCall(true)}
-              disabled={callInProgress}
+              disabled={callInProgress || suspended}
               className="icon-btn"
-              title={callInProgress ? "You're already on a call" : "Video call"}
+              title={callTitle || "Video call"}
             >
               <FiVideo className="text-lg" />
             </button>
@@ -205,13 +222,23 @@ const ChatArea = ({
           onCopy={handleCopy}
         />
 
-        <MessageInput
-          onSendMessage={onSendMessage}
-          placeholder={`Message ${chat.name.split(" ")[0]}`}
-          currentUser={currentUser}
-          chatId={chat.chatId}
-          chatReady={chat.exists}
-        />
+        {suspended ? (
+          <div className="flex items-center gap-3 border-t border-red-100 bg-red-50 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm text-red-700">
+            <FiSlash className="flex-shrink-0" />
+            <p>
+              {chat.name}&apos;s account has been suspended by the ChatLoop team. You can&apos;t
+              message or call them.
+            </p>
+          </div>
+        ) : (
+          <MessageInput
+            onSendMessage={onSendMessage}
+            placeholder={`Message ${chat.name.split(" ")[0]}`}
+            currentUser={currentUser}
+            chatId={chat.chatId}
+            chatReady={chat.exists}
+          />
+        )}
       </div>
 
       <AnimatePresence>

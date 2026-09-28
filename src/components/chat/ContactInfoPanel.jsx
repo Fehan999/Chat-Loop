@@ -44,11 +44,15 @@ const ContactInfoPanel = ({
         />
         <h4 className="mt-3 text-lg font-semibold text-gray-900">{chat.name}</h4>
         <p className="text-sm text-gray-500">{chat.username}</p>
-        <p
-          className={`mt-1 text-xs ${chat.status === "online" ? "text-emerald-600" : "text-gray-400"}`}
-        >
-          {getStatusText(chat.status, chat.lastSeen)}
-        </p>
+        {chat.suspended ? (
+          <p className="mt-1 text-xs font-medium text-red-500">Account suspended</p>
+        ) : (
+          <p
+            className={`mt-1 text-xs ${chat.status === "online" ? "text-emerald-600" : "text-gray-400"}`}
+          >
+            {getStatusText(chat.status, chat.lastSeen)}
+          </p>
+        )}
         {profile.uniqueId && (
           <span className="mt-3 rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
             ID {profile.uniqueId}

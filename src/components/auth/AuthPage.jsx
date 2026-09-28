@@ -118,13 +118,13 @@ const AuthPage = () => {
         <Credit />
       </aside>
 
-      <main className="flex flex-1 items-center justify-center px-4 py-10 sm:px-8">
+      <main className="flex min-w-0 flex-1 items-center justify-center px-4 py-10 sm:px-8">
         <div className="w-full max-w-md">
           <div className="mb-8 flex justify-center lg:hidden">
             <Logo size={44} withText />
           </div>
           <AuthCard />
-          <div className="mt-6">
+          <div className="mt-4">
             <AboutDeveloper />
           </div>
         </div>

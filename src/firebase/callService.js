@@ -92,11 +92,15 @@ const finishCall = async (callId, from, to, duration = 0) => {
 };
 
 class CallService {
-  async initiateCall({ chatId, caller, callee, isVideo }) {
+  // the id is made up front so the call screen can open before anything is written
+  newCallId(chatId) {
+    return `${chatId}_${Date.now()}`;
+  }
+
+  async initiateCall({ callId, chatId, caller, callee, isVideo }) {
     const busy = await this.checkUserActiveCall(callee.id);
     if (busy) throw new Error(`${callee.name || "They"} is on another call right now`);
 
-    const callId = `${chatId}_${Date.now()}`;
     await setDoc(callDoc(callId), {
       id: callId,
       chatId,

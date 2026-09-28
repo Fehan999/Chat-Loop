@@ -94,7 +94,11 @@ const ChatDashboard = ({ user }) => {
       if (!profile) return;
 
       const chat = chatByUser.get(otherId);
-      const { status, lastSeen } = resolvePresence(profile);
+      const suspended = !!profile.banned;
+      // a suspended account never shows as online
+      const { status, lastSeen } = suspended
+        ? { status: "offline", lastSeen: null }
+        : resolvePresence(profile);
       rows.push({
         key: otherId,
         userId: otherId,
@@ -111,6 +115,7 @@ const ChatDashboard = ({ user }) => {
         lastMessageTime: chat?.lastMessage ? chat.lastMessageTime : null,
         unreadCount: chat?.unreadCounts?.[uid] || 0,
         isFriend: friendIds.includes(otherId),
+        suspended,
       });
     });
 
@@ -223,6 +228,10 @@ const ChatDashboard = ({ user }) => {
 
   const handleSendMessage = async (text, attachments = []) => {
     if (!selectedChat) return false;
+    if (selectedChat.suspended) {
+      toast.error(`${selectedChat.name}'s account is suspended.`);
+      return false;
+    }
     if (!selectedChat.exists) await getOrCreateChat(uid, selectedChat.userId);
 
     const ok = await sendMessage(
@@ -242,27 +251,35 @@ const ChatDashboard = ({ user }) => {
 
   const startCall = async (isVideo) => {
     if (!selectedChat) return;
+    if (selectedChat.suspended) {
+      toast.error(`${selectedChat.name}'s account is suspended, you can't call them.`);
+      return;
+    }
     if (activeCall) {
       toast("You're already on a call.");
       return;
     }
-    try {
-      if (!selectedChat.exists) await getOrCreateChat(uid, selectedChat.userId);
-      const callId = await callService.initiateCall({
-        chatId: selectedChat.chatId,
+    // the call screen opens straight away and asks for the mic/camera while the call
+    // doc is written in the background. if that fails the screen closes with the reason
+    const target = selectedChat;
+    const callId = callService.newCallId(target.chatId);
+    const ready = (async () => {
+      if (!target.exists) await getOrCreateChat(uid, target.userId);
+      await callService.initiateCall({
+        callId,
+        chatId: target.chatId,
         caller: me,
-        callee: { id: selectedChat.userId, name: selectedChat.name },
+        callee: { id: target.userId, name: target.name },
         isVideo,
       });
-      setActiveCall({
-        id: callId,
-        isVideo,
-        isInitiator: true,
-        peer: { id: selectedChat.userId, name: selectedChat.name, avatar: selectedChat.avatar },
-      });
-    } catch (error) {
-      toast.error(error.message || "Couldn't start the call.");
-    }
+    })();
+    setActiveCall({
+      id: callId,
+      isVideo,
+      isInitiator: true,
+      ready,
+      peer: { id: target.userId, name: target.name, avatar: target.avatar },
+    });
   };
 
   useEffect(
@@ -274,27 +291,24 @@ const ChatDashboard = ({ user }) => {
     [uid]
   );
 
-  const acceptIncomingCall = async (call) => {
+  // the call screen opens on tap, the "active" write happens alongside
+  const acceptIncomingCall = (call) => {
     setIncomingCall(null);
-    try {
-      await callService.acceptCall(call.id);
-      const caller = profiles[call.callerId];
-      setActiveCall({
-        id: call.id,
-        isVideo: call.isVideo,
-        isInitiator: false,
-        peer: {
-          id: call.callerId,
-          name: call.callerName,
-          avatar: caller
-            ? avatarFor(caller)
-            : call.callerAvatar || avatarFor({ name: call.callerName }),
-        },
-      });
-      setSelectedKey(call.callerId);
-    } catch {
-      toast.error("Couldn't join the call.");
-    }
+    const caller = profiles[call.callerId];
+    setActiveCall({
+      id: call.id,
+      isVideo: call.isVideo,
+      isInitiator: false,
+      ready: callService.acceptCall(call.id),
+      peer: {
+        id: call.callerId,
+        name: call.callerName,
+        avatar: caller
+          ? avatarFor(caller)
+          : call.callerAvatar || avatarFor({ name: call.callerName }),
+      },
+    });
+    setSelectedKey(call.callerId);
   };
 
   const declineIncomingCall = (call) => {

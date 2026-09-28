@@ -152,7 +152,7 @@ const AdminLogin = () => {
           </div>
         </div>
 
-        <AboutDeveloper compact />
+        <AboutDeveloper />
       </div>
     </div>
   );

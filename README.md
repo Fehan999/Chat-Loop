@@ -54,6 +54,7 @@ The app runs on http://localhost:5173.
 | --- | --- | --- |
 | `VITE_GEMINI_API_KEY` | only for AI chat | Free key from [Google AI Studio](https://aistudio.google.com/app/apikey) |
 | `VITE_GEMINI_MODEL` | no | Defaults to `gemini-flash-latest` |
+| `VITE_TURN_URLS`, `VITE_TURN_USERNAME`, `VITE_TURN_CREDENTIAL` | recommended for calls | Your own TURN server, so calls connect on mobile data and strict wifi too. [Metered](https://www.metered.ca/stun-turn) and Cloudflare have free tiers |
 
 Everything else works without a `.env` file. The Firebase and Supabase keys in
 `src/firebase/config.js` and `src/utils/supabase.js` are public client keys by
@@ -125,6 +126,10 @@ the UI: the guest account can't write anything anywhere. If you change any of th
 change them in both places and redeploy the rules.
 
 Normal users don't get an admin button in the app, only admin accounts see it in the sidebar.
+
+**Suspending** - a suspended person gets a suspended screen. Their friends still see them in the
+chat list, marked "Account suspended", and can't message or call them (`firestore.rules` blocks
+that too, not just the UI). Unsuspend from the Users list, the user's details or the report card.
 
 **Overview** - every number is real. Users, online now, active today, sign-ups, friendships,
 reports and suspensions come straight from the live users and reports data. Messages and

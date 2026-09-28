@@ -4,6 +4,7 @@ import {
   FiHash,
   FiLock,
   FiMessageSquare,
+  FiRotateCcw,
   FiSlash,
   FiTrash2,
   FiUser,
@@ -169,6 +170,15 @@ const ReportsSection = ({ reports, users, canEdit, actions }) => {
                   className="btn-secondary px-3 py-2 text-red-600 hover:bg-red-50"
                 >
                   {lockIcon || <FiTrash2 />} Remove message
+                </button>
+              )}
+              {reportedUser?.banned && (
+                <button
+                  onClick={run(`${report.id}-unban`, () => actions.unbanUser(reportedUser))}
+                  disabled={!!busy}
+                  className="btn-secondary px-3 py-2 text-emerald-700 hover:bg-emerald-50"
+                >
+                  {lockIcon || <FiRotateCcw />} Unsuspend user
                 </button>
               )}
               {reportedUser && !reportedUser.banned && (

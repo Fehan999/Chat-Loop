@@ -18,11 +18,13 @@ const Badge = ({ count }) =>
   ) : null;
 
 const ChatRow = ({ chat, active, onSelect }) => {
-  const preview = chat.lastMessage
-    ? `${chat.lastMessageMine ? "You: " : ""}${chat.lastMessage}`
-    : chat.isFriend
-      ? "Say hi 👋"
-      : "No messages yet";
+  const preview = chat.suspended
+    ? "Account suspended"
+    : chat.lastMessage
+      ? `${chat.lastMessageMine ? "You: " : ""}${chat.lastMessage}`
+      : chat.isFriend
+        ? "Say hi 👋"
+        : "No messages yet";
   const unread = chat.unreadCount > 0;
 
   return (
@@ -55,7 +57,13 @@ const ChatRow = ({ chat, active, onSelect }) => {
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p
-            className={`truncate text-sm ${unread ? "font-medium text-gray-800" : "text-gray-500"}`}
+            className={`truncate text-sm ${
+              chat.suspended
+                ? "text-red-500"
+                : unread
+                  ? "font-medium text-gray-800"
+                  : "text-gray-500"
+            }`}
           >
             {preview}
           </p>
