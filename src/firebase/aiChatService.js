@@ -16,7 +16,10 @@ import { db } from "./config";
 // the key comes from .env (see README)
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const MODEL = import.meta.env.VITE_GEMINI_MODEL || "gemini-flash-latest";
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+// the lite model is used when the main one is overloaded or rate limited
+const FALLBACK_MODEL = "gemini-flash-lite-latest";
+const endpointFor = (model) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
 // how many earlier messages go along with each question
 const CONTEXT_MESSAGES = 20;
@@ -64,8 +67,8 @@ const buildContents = (history) => {
   return contents;
 };
 
-const askGemini = async (history) => {
-  const response = await fetch(ENDPOINT, {
+const askGemini = async (history, model = MODEL) => {
+  const response = await fetch(endpointFor(model), {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": API_KEY },
     body: JSON.stringify({
@@ -79,6 +82,9 @@ const askGemini = async (history) => {
   if (!response.ok) {
     const error = new Error(data?.error?.message || `Gemini request failed (${response.status})`);
     error.status = response.status;
+    if ([429, 503].includes(response.status) && model !== FALLBACK_MODEL) {
+      return askGemini(history, FALLBACK_MODEL);
+    }
     throw error;
   }
 
