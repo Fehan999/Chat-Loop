@@ -1,101 +1,52 @@
-import React, { useState, useEffect } from "react";
-import { motion } from "framer-motion";
-import { FiUsers, FiUserMinus, FiUser } from "react-icons/fi";
-import { doc, updateDoc, arrayRemove } from "firebase/firestore";
-import { db } from "../../../firebase/config";
-import UserCard from "./UserCard";
+import { useState } from "react";
+import { FiSearch, FiUsers } from "react-icons/fi";
+import { useLiveProfiles } from "../../../hooks/useLiveProfiles";
 import LoadingState from "./LoadingState";
+import UserCard from "./UserCard";
 
-const FriendsTab = ({
-  currentUserId,
-  friendsList = [],
-  friendsData = [],
-  onViewProfile,
-  onRemoveFriend,
-}) => {
-  const [loading, setLoading] = useState(true);
-  const [removingFriendId, setRemovingFriendId] = useState(null);
+const FriendsTab = ({ friendIds, handlers }) => {
+  const [filter, setFilter] = useState("");
+  const profiles = useLiveProfiles(friendIds);
+  const loaded = friendIds.every((id) => id in profiles);
 
-  useEffect(() => {
-    setLoading(false);
-  }, [friendsData]);
+  const friends = friendIds
+    .map((id) => profiles[id] && { ...profiles[id], id })
+    .filter(Boolean)
+    .filter((f) => !filter || f.name?.toLowerCase().includes(filter.toLowerCase()))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
-  const handleRemoveFriend = async (friendId) => {
-    if (!window.confirm("Are you sure you want to remove this friend?")) return;
-
-    setRemovingFriendId(friendId);
-    try {
-      // Remove from current user's friends
-      await updateDoc(doc(db, "users", currentUserId), {
-        friends: arrayRemove(friendId),
-      });
-
-      // Remove from friend's friends list
-      await updateDoc(doc(db, "users", friendId), {
-        friends: arrayRemove(currentUserId),
-      });
-
-      // Call parent callback
-      if (onRemoveFriend) {
-        await onRemoveFriend(friendId);
-      }
-
-      alert("Friend removed successfully");
-    } catch (error) {
-      console.error("Error removing friend:", error);
-      alert("Failed to remove friend. Please try again.");
-    } finally {
-      setRemovingFriendId(null);
-    }
-  };
-
-  if (loading) {
-    return <LoadingState />;
-  }
-
-  if (friendsData.length === 0) {
+  if (friendIds.length === 0) {
     return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="text-center py-16"
-      >
-        <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
-          <FiUsers className="text-3xl text-indigo-400" />
+      <div className="py-16 text-center">
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-50">
+          <FiUsers className="text-2xl text-indigo-400" />
         </div>
-        <h3 className="text-gray-900 font-medium mb-2">No friends yet</h3>
-        <p className="text-gray-400 text-sm max-w-xs mx-auto">
-          Connect with people and grow your network!
-        </p>
-        <div className="mt-6 inline-flex items-center gap-2 text-xs text-indigo-400">
-          <FiUser />
-          <span>Go to Discover tab to find friends</span>
-        </div>
-      </motion.div>
+        <h3 className="font-medium text-gray-900">No friends yet</h3>
+        <p className="mt-1 text-sm text-gray-400">Head to Discover to find people you know.</p>
+      </div>
     );
   }
 
+  if (!loaded) return <LoadingState />;
+
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-gray-400 mb-2">
-        You have {friendsData.length} friend
-        {friendsData.length !== 1 ? "s" : ""}
-      </p>
-      {friendsData.map((friend, index) => (
-        <motion.div
-          key={friend.id}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: index * 0.05 }}
-        >
-          <UserCard
-            user={friend}
-            variant="friend"
-            onViewProfile={() => onViewProfile(friend)}
-            onRemoveFriend={() => handleRemoveFriend(friend.id)}
-            isRemoving={removingFriendId === friend.id}
+    <div className="space-y-2">
+      {friendIds.length > 6 && (
+        <div className="relative mb-3">
+          <FiSearch className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter friends"
+            className="input-field bg-white pl-11"
           />
-        </motion.div>
+        </div>
+      )}
+      <p className="px-1 text-xs text-gray-400">
+        {friendIds.length} friend{friendIds.length === 1 ? "" : "s"}
+      </p>
+      {friends.map((friend) => (
+        <UserCard key={friend.id} user={friend} variant="friend" handlers={handlers} />
       ))}
     </div>
   );

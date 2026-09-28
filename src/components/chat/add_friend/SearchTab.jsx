@@ -1,206 +1,100 @@
-// SearchTab.jsx - Updated to exclude friends
-import React, { useState, useEffect, useMemo } from "react";
-import { motion } from "framer-motion";
-import { collection, getDocs } from "firebase/firestore";
-import { db } from "../../../firebase/config";
+import { getDocs } from "firebase/firestore";
+import { useEffect, useMemo, useState } from "react";
 import { FiSearch, FiUsers } from "react-icons/fi";
-import UserCard from "./UserCard";
-import LoadingState from "./LoadingState";
+import { usersCollection } from "../../../firebase/firestoreService";
 import EmptyState from "./EmptyState";
+import LoadingState from "./LoadingState";
+import UserCard from "./UserCard";
 
-const SearchTab = ({
-  currentUserId,
-  onViewProfile,
-  onSendRequest,
-  friends = [],
-  sentRequests = [],
-}) => {
+// the user list is small enough to load once and filter in memory,
+// which also lets people search by any part of a name
+const SearchTab = ({ currentUserId, relationFor, handlers }) => {
   const [searchTerm, setSearchTerm] = useState("");
-  const [users, setUsers] = useState([]);
+  const [debounced, setDebounced] = useState("");
   const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searching, setSearching] = useState(false);
 
-  // Memoize friend IDs and sent request IDs
-  const friendIds = useMemo(() => new Set(friends), [friends]);
-  const sentRequestIds = useMemo(
-    () => new Set(sentRequests.map((req) => req.userId)),
-    [sentRequests]
-  );
-
-  // Load all users - excluding friends
   useEffect(() => {
-    const loadUsers = async () => {
-      if (!currentUserId) return;
-
-      setLoading(true);
-      try {
-        const usersRef = collection(db, "users");
-        const querySnapshot = await getDocs(usersRef);
-
-        const loadedUsers = [];
-        for (const docSnapshot of querySnapshot.docs) {
-          const userData = docSnapshot.data();
-          // Exclude current user and existing friends
-          if (
-            docSnapshot.id !== currentUserId &&
-            !friendIds.has(docSnapshot.id)
-          ) {
-            loadedUsers.push({
-              id: docSnapshot.id,
-              ...userData,
-              friendStatus: sentRequestIds.has(docSnapshot.id)
-                ? "request_sent"
-                : "none",
-            });
-          }
-        }
-
-        setAllUsers(loadedUsers);
-      } catch (error) {
-        console.error("Error loading users:", error);
-      } finally {
-        setLoading(false);
-      }
+    let cancelled = false;
+    getDocs(usersCollection)
+      .then((snapshot) => {
+        if (cancelled) return;
+        setAllUsers(
+          snapshot.docs
+            .filter((d) => d.id !== currentUserId && d.data().email && !d.data().banned)
+            .map((d) => ({ id: d.id, ...d.data() }))
+        );
+      })
+      .catch((error) => console.error("Error loading users:", error))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
     };
-
-    loadUsers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUserId]);
 
-  // Update friend status without reloading all users
   useEffect(() => {
-    if (allUsers.length === 0) return;
-
-    setAllUsers((prevUsers) =>
-      prevUsers.map((user) => ({
-        ...user,
-        friendStatus: sentRequestIds.has(user.id) ? "request_sent" : "none",
-      }))
-    );
-  }, [friendIds, sentRequestIds, allUsers.length]);
-
-  // Search function
-  useEffect(() => {
-    if (searchTerm.length < 2) {
-      setUsers([]);
-      return;
-    }
-
-    setSearching(true);
-
-    const timer = setTimeout(() => {
-      const searchLower = searchTerm.toLowerCase();
-      const isIdSearch = /^\d{4}$/.test(searchTerm);
-
-      const filtered = allUsers.filter((user) => {
-        if (isIdSearch) {
-          return user.uniqueId === searchTerm;
-        }
-
-        return (
-          user.name?.toLowerCase().includes(searchLower) ||
-          user.username?.toLowerCase().includes(searchLower) ||
-          user.email?.toLowerCase().includes(searchLower) ||
-          user.uniqueId?.includes(searchTerm)
-        );
-      });
-
-      setUsers(filtered);
-      setSearching(false);
-    }, 300);
-
+    const timer = setTimeout(() => setDebounced(searchTerm.trim()), 200);
     return () => clearTimeout(timer);
-  }, [searchTerm, allUsers]);
+  }, [searchTerm]);
+
+  const results = useMemo(() => {
+    if (debounced.length < 2) return [];
+    const term = debounced.toLowerCase().replace(/^@/, "");
+    if (/^\d{4}$/.test(term)) return allUsers.filter((u) => u.uniqueId === term);
+    return allUsers
+      .filter(
+        (u) =>
+          u.name?.toLowerCase().includes(term) ||
+          u.username?.toLowerCase().includes(term) ||
+          u.email?.toLowerCase() === term
+      )
+      .slice(0, 30);
+  }, [allUsers, debounced]);
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 bg-gradient-to-b from-gray-50 to-white pt-2 pb-4 z-10">
-        <div className="relative">
-          <FiSearch className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 text-lg" />
-          <input
-            type="text"
-            placeholder="Search by name, username, email, or 4-digit ID..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-4 bg-white border-2 border-gray-200 rounded-2xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all shadow-sm"
-            autoFocus
-          />
-          {searching && (
-            <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
-              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-            </div>
-          )}
-        </div>
-
-        {searchTerm.length === 0 && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-gray-400">
-            <FiUsers className="text-indigo-400" />
-            <span>Try searching by name or 4-digit ID</span>
-          </div>
-        )}
+      <div className="relative">
+        <FiSearch className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by name, username, email or 4-digit ID"
+          className="input-field bg-white py-3.5 pl-11 shadow-sm"
+          autoFocus
+        />
       </div>
 
       {loading ? (
         <LoadingState />
+      ) : debounced.length < 2 ? (
+        <div className="py-12 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-50">
+            <FiUsers className="text-2xl text-indigo-400" />
+          </div>
+          <h3 className="font-medium text-gray-900">Find your people</h3>
+          <p className="mx-auto mt-1 max-w-xs text-sm text-gray-400">
+            Type at least two letters, or someone&apos;s 4-digit ID from their profile.
+          </p>
+          <p className="mt-4 text-xs text-indigo-400">{allUsers.length} people on ChatLoop</p>
+        </div>
+      ) : results.length === 0 ? (
+        <EmptyState searchTerm={debounced} />
       ) : (
-        <div className="space-y-3 pb-4">
-          {searchTerm.length > 0 && (
-            <p className="text-xs text-gray-400 px-1">
-              {searching
-                ? "Searching..."
-                : users.length === 0
-                ? "No users found"
-                : `Found ${users.length} user${users.length !== 1 ? "s" : ""}`}
-            </p>
-          )}
-
-          {users.map((user, index) => (
-            <motion.div
+        <div className="space-y-2">
+          <p className="px-1 text-xs text-gray-400">
+            {results.length} result{results.length === 1 ? "" : "s"}
+          </p>
+          {results.map((user) => (
+            <UserCard
               key={user.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.05 }}
-            >
-              <UserCard
-                user={user}
-                searchTerm={searchTerm}
-                onViewProfile={() => onViewProfile(user)}
-                onSendRequest={() => onSendRequest(user.id)}
-                variant="search"
-                friendStatus={user.friendStatus}
-              />
-            </motion.div>
+              user={user}
+              variant="search"
+              relation={relationFor(user.id)}
+              searchTerm={debounced.replace(/^@/, "")}
+              handlers={handlers}
+            />
           ))}
-
-          {searchTerm.length >= 2 && users.length === 0 && !searching && (
-            <EmptyState searchTerm={searchTerm} />
-          )}
-
-          {searchTerm.length < 2 && searchTerm.length > 0 && (
-            <div className="text-center py-12">
-              <p className="text-gray-400 text-sm">
-                Type at least 2 characters to search
-              </p>
-            </div>
-          )}
-
-          {searchTerm.length === 0 && allUsers.length > 0 && (
-            <div className="text-center py-12">
-              <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <FiUsers className="text-3xl text-indigo-400" />
-              </div>
-              <h3 className="text-gray-900 font-medium mb-2">
-                Discover New Friends
-              </h3>
-              <p className="text-gray-400 text-sm max-w-xs mx-auto">
-                Search for friends by name, username, or their unique 4-digit ID
-              </p>
-              <p className="text-xs text-indigo-400 mt-4">
-                {allUsers.length} people available to connect
-              </p>
-            </div>
-          )}
         </div>
       )}
     </div>

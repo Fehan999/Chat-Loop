@@ -1,63 +1,35 @@
-import React from "react";
-import { motion } from "framer-motion";
-import { FiInbox, FiUserPlus } from "react-icons/fi";
+import { FiInbox } from "react-icons/fi";
+import { formatRelativeTime } from "../../../utils/dateUtils";
 import UserCard from "./UserCard";
-import LoadingState from "./LoadingState";
 
-const ReceivedRequestsTab = ({
-  requests,
-  loading,
-  onAccept,
-  onDecline,
-  onViewProfile,
-}) => {
-  if (loading) {
-    return <LoadingState />;
-  }
-
+const ReceivedRequestsTab = ({ requests, handlers }) => {
   if (requests.length === 0) {
     return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="text-center py-16"
-      >
-        <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-4">
-          <FiInbox className="text-3xl text-green-400" />
+      <div className="py-16 text-center">
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
+          <FiInbox className="text-2xl text-emerald-400" />
         </div>
-        <h3 className="text-gray-900 font-medium mb-2">Inbox is empty</h3>
-        <p className="text-gray-400 text-sm max-w-xs mx-auto">
-          When someone sends you a friend request, you'll see it here
+        <h3 className="font-medium text-gray-900">No pending requests</h3>
+        <p className="mt-1 text-sm text-gray-400">
+          When someone adds you, it&apos;ll show up here.
         </p>
-        <div className="mt-6 inline-flex items-center gap-2 text-xs text-indigo-400">
-          <FiUserPlus />
-          <span>Connect with people in Discover tab</span>
-        </div>
-      </motion.div>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-gray-400 mb-2">
-        You have {requests.length} pending request
-        {requests.length !== 1 ? "s" : ""}
+    <div className="space-y-2">
+      <p className="px-1 text-xs text-gray-400">
+        {requests.length} pending request{requests.length === 1 ? "" : "s"}
       </p>
-      {requests.map((request, index) => (
-        <motion.div
+      {requests.map((request) => (
+        <UserCard
           key={request.id}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: index * 0.05 }}
-        >
-          <UserCard
-            user={request}
-            variant="received"
-            onViewProfile={() => onViewProfile(request)}
-            onAccept={() => onAccept(request.userId)}
-            onDecline={() => onDecline(request.userId)}
-          />
-        </motion.div>
+          user={request}
+          variant="received"
+          meta={request.createdAt ? `Sent ${formatRelativeTime(request.createdAt)}` : null}
+          handlers={handlers}
+        />
       ))}
     </div>
   );
