@@ -1,4 +1,5 @@
 import { onAuthStateChanged, signOut } from "firebase/auth";
+import { isGuestAccount } from "../firebase/adminService";
 import { auth } from "../firebase/config";
 import { updateUserStatus } from "../firebase/firestoreService";
 
@@ -37,7 +38,8 @@ export const initializeUserStatus = () => {
 
   const unsubscribe = onAuthStateChanged(auth, (user) => {
     stopPresence?.();
-    stopPresence = user ? startPresence(user.uid) : null;
+    // the guest login has no profile and can't write, so it never shows as online
+    stopPresence = user && !isGuestAccount(user) ? startPresence(user.uid) : null;
   });
 
   return () => {
@@ -49,7 +51,7 @@ export const initializeUserStatus = () => {
 // marks the user offline before the session goes away, otherwise the
 // write would be rejected once we're signed out
 export const logout = async () => {
-  const uid = auth.currentUser?.uid;
-  if (uid) await updateUserStatus(uid, "offline");
+  const user = auth.currentUser;
+  if (user && !isGuestAccount(user)) await updateUserStatus(user.uid, "offline");
   await signOut(auth);
 };

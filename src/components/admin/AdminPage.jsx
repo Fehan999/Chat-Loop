@@ -8,13 +8,15 @@ import {
   FiEye,
   FiFlag,
   FiGrid,
-  FiLogIn,
+  FiLock,
+  FiLogOut,
   FiRefreshCw,
   FiShield,
   FiUsers,
 } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import {
+  isGuestAccount,
   isOwnerAccount,
   ownerNeedsVerification,
   removeReportedMessage,
@@ -25,8 +27,11 @@ import {
 } from "../../firebase/adminService";
 import { auth } from "../../firebase/config";
 import { useAdminData } from "../../hooks/useAdminData";
+import { usePageTitle } from "../../hooks/usePageTitle";
+import { logout } from "../../service/userStatus";
 import Logo from "../brand/Logo";
 import SplashScreen from "../common/SplashScreen";
+import AdminLogin from "./AdminLogin";
 import AnnouncementSection from "./AnnouncementSection";
 import OverviewSection from "./OverviewSection";
 import ReportsSection from "./ReportsSection";
@@ -39,22 +44,74 @@ const SECTIONS = [
   { id: "announcement", label: "Announcement", icon: FiBell },
 ];
 
-// anyone can open /admin and look around. visitors get demo data and every
-// action is locked; the owner account gets live data and working buttons
+const GUEST_NOTICE = "You're logged in as guest, you can't edit or take action.";
+
+// signed in, but with an account that can't open the dashboard
+const NoAccess = ({ user, onVerify, onRecheck }) => {
+  const needsVerification = ownerNeedsVerification(user);
+  return (
+    <div className="flex min-h-[100dvh] items-center justify-center bg-gray-50 px-4">
+      <div className="card w-full max-w-md p-6 text-center sm:p-8">
+        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-xl text-amber-600">
+          {needsVerification ? <FiAlertTriangle /> : <FiLock />}
+        </span>
+        <h1 className="mt-4 text-xl font-bold text-gray-900">
+          {needsVerification ? "Verify your email first" : "No admin access"}
+        </h1>
+        <p className="mt-2 text-sm text-gray-500">
+          {needsVerification ? (
+            <>
+              You&apos;re signed in with an admin email, but it isn&apos;t verified yet. Verify it
+              to unlock the dashboard.
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-gray-700">{user.email}</span> isn&apos;t an admin
+              account. Sign out and use an admin account or the guest login.
+            </>
+          )}
+        </p>
+        <div className="mt-6 flex flex-col gap-2">
+          {needsVerification && (
+            <div className="flex gap-2">
+              <button onClick={onVerify} className="btn-secondary flex-1 py-2.5">
+                Send email
+              </button>
+              <button onClick={onRecheck} className="btn-primary flex-1 py-2.5">
+                I&apos;ve verified
+              </button>
+            </div>
+          )}
+          <button onClick={logout} className="btn-secondary py-2.5">
+            <FiLogOut /> Sign out and switch account
+          </button>
+          <Link to="/" className="py-2 text-sm text-gray-500 hover:text-gray-700">
+            Back to chats
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// /admin shows a login screen first. admin emails get full access, the guest
+// login sees the same live data but every action is blocked
 const AdminPage = ({ user }) => {
   const [section, setSection] = useState("overview");
   const [, forceRender] = useState(0);
-  const isOwner = isOwnerAccount(user);
-  const data = useAdminData(isOwner);
+  const isOwner = isOwnerAccount(auth.currentUser || user);
+  const isGuest = isGuestAccount(user);
+  const data = useAdminData({ enabled: isOwner || isGuest, withCounts: isOwner });
+  usePageTitle(user ? "Admin panel" : "Admin login");
 
   const pendingReports = data.reports.filter((r) => (r.status || "pending") === "pending").length;
 
-  // wraps every write. in demo mode it just explains why nothing happened
+  // wraps every write. for the guest it just explains why nothing happened
   const guarded =
     (fn, successMessage) =>
     async (...args) => {
       if (!isOwner) {
-        toast("Demo mode, only the owner can change data.", { icon: "🔒" });
+        toast(GUEST_NOTICE, { icon: "🔒" });
         return false;
       }
       try {
@@ -104,10 +161,20 @@ const AdminPage = ({ user }) => {
     await auth.currentUser?.reload();
     await auth.currentUser?.getIdToken(true);
     forceRender((n) => n + 1);
-    if (auth.currentUser?.emailVerified) toast.success("Verified, owner mode unlocked");
+    if (auth.currentUser?.emailVerified) toast.success("Verified, admin access unlocked");
     else toast("Still not verified, check your inbox.");
   };
 
+  if (!user) return <AdminLogin />;
+  if (!isOwner && !isGuest) {
+    return (
+      <NoAccess
+        user={auth.currentUser || user}
+        onVerify={sendVerification}
+        onRecheck={recheckVerification}
+      />
+    );
+  }
   if (data.loading) return <SplashScreen label="Loading admin data..." />;
 
   return (
@@ -138,20 +205,31 @@ const AdminPage = ({ user }) => {
             </button>
           ))}
         </nav>
-        <Link
-          to="/"
-          className="mt-auto flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-gray-500 hover:bg-gray-50"
-        >
-          <FiArrowLeft /> Back to chats
-        </Link>
+        {isOwner ? (
+          <Link
+            to="/"
+            className="mt-auto flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-gray-500 hover:bg-gray-50"
+          >
+            <FiArrowLeft /> Back to chats
+          </Link>
+        ) : (
+          <button
+            onClick={logout}
+            className="mt-auto flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-gray-500 hover:bg-gray-50"
+          >
+            <FiLogOut /> Leave guest mode
+          </button>
+        )}
       </aside>
 
       <main className="min-w-0 flex-1">
         <header className="sticky top-0 z-20 border-b border-gray-100 bg-white/90 backdrop-blur">
           <div className="flex items-center gap-3 px-4 py-3 sm:px-6">
-            <Link to="/" className="icon-btn -ml-2 lg:hidden" aria-label="Back">
-              <FiArrowLeft />
-            </Link>
+            {isOwner && (
+              <Link to="/" className="icon-btn -ml-2 lg:hidden" aria-label="Back">
+                <FiArrowLeft />
+              </Link>
+            )}
             <h1 className="text-lg font-bold text-gray-900">
               {SECTIONS.find((s) => s.id === section)?.label}
             </h1>
@@ -160,7 +238,7 @@ const AdminPage = ({ user }) => {
               {isOwner ? (
                 <>
                   <span className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-                    <FiShield /> Live · owner
+                    <FiShield /> Admin
                   </span>
                   <button onClick={data.refresh} className="icon-btn" title="Refresh counts">
                     <FiRefreshCw />
@@ -169,15 +247,13 @@ const AdminPage = ({ user }) => {
               ) : (
                 <span className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
                   <FiEye />
-                  <span className="hidden sm:inline">Demo data · read only</span>
-                  <span className="sm:hidden">Demo</span>
+                  <span className="hidden sm:inline">Guest · read only</span>
+                  <span className="sm:hidden">Guest</span>
                 </span>
               )}
-              {!user && (
-                <Link to="/auth" className="btn-secondary whitespace-nowrap px-3 py-1.5 text-xs">
-                  <FiLogIn /> Sign in
-                </Link>
-              )}
+              <button onClick={logout} className="icon-btn hover:text-red-500" title="Sign out">
+                <FiLogOut />
+              </button>
             </div>
           </div>
 
@@ -197,28 +273,14 @@ const AdminPage = ({ user }) => {
         </header>
 
         <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
-          {ownerNeedsVerification(auth.currentUser || user) && (
-            <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 sm:flex-row sm:items-center">
-              <FiAlertTriangle className="flex-shrink-0 text-lg" />
-              <p className="flex-1">
-                You&apos;re signed in with the owner email, but it isn&apos;t verified yet. Verify
-                it to unlock live data and editing.
-              </p>
-              <div className="flex gap-2">
-                <button onClick={sendVerification} className="btn-secondary bg-white px-3 py-2">
-                  Send email
-                </button>
-                <button onClick={recheckVerification} className="btn-primary px-3 py-2">
-                  I&apos;ve verified
-                </button>
-              </div>
-            </div>
-          )}
-
-          {!isOwner && !ownerNeedsVerification(user) && (
-            <p className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-indigo-800">
-              You&apos;re looking at a demo of the ChatLoop admin panel. The people and numbers
-              below are made up, and changes are turned off.
+          {isGuest && (
+            <p className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              <FiLock className="mt-0.5 flex-shrink-0" />
+              <span>
+                <strong className="font-semibold">You are logged in as guest.</strong> You can see
+                the live dashboard, but you can&apos;t edit, delete, suspend or take any action.
+                Emails are partly hidden and message counts are admin only.
+              </span>
             </p>
           )}
 
@@ -227,11 +289,17 @@ const AdminPage = ({ user }) => {
               users={data.users}
               reports={data.reports}
               counts={data.counts}
+              canEdit={isOwner}
               onOpen={setSection}
             />
           )}
           {section === "users" && (
-            <UsersSection users={data.users} canEdit={isOwner} onSaveUser={saveUser} />
+            <UsersSection
+              users={data.users}
+              canEdit={isOwner}
+              lockedMessage={GUEST_NOTICE}
+              onSaveUser={saveUser}
+            />
           )}
           {section === "reports" && (
             <ReportsSection

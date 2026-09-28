@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { FiChevronLeft, FiChevronRight, FiEdit2, FiLock, FiSearch, FiSlash } from "react-icons/fi";
 import { formatDate, formatRelativeTime } from "../../utils/dateUtils";
 import { getStatusDotClass, resolvePresence } from "../../utils/statusHelper";
+import { maskEmail } from "../../firebase/adminService";
 import { avatarFor, formatUsername } from "../../utils/userDisplay";
 import FormField from "../auth/FormField";
 import Modal from "../common/Modal";
@@ -15,8 +16,8 @@ const FILTERS = [
   { id: "banned", label: "Banned" },
 ];
 
-// details + edit form. visitors can open it to look around, saving is owner only
-const EditUserModal = ({ user, canEdit, onSave, onClose }) => {
+// details + edit form. the guest can open it to look around, saving is admin only
+const EditUserModal = ({ user, canEdit, lockedMessage, onSave, onClose }) => {
   const [form, setForm] = useState({
     name: user.name || "",
     bio: user.bio || "",
@@ -39,7 +40,9 @@ const EditUserModal = ({ user, canEdit, onSave, onClose }) => {
         <img src={avatarFor(user)} alt="" className="h-14 w-14 rounded-full object-cover" />
         <div className="min-w-0">
           <p className="truncate font-semibold text-gray-900">{user.name}</p>
-          <p className="truncate text-sm text-gray-500">{user.email}</p>
+          <p className="truncate text-sm text-gray-500">
+            {canEdit ? user.email : maskEmail(user.email)}
+          </p>
           <p className="text-xs text-gray-400">
             {formatUsername(user.username)} · ID {user.uniqueId || "----"}
           </p>
@@ -101,7 +104,7 @@ const EditUserModal = ({ user, canEdit, onSave, onClose }) => {
 
       {!canEdit && (
         <p className="mt-4 flex items-center gap-2 rounded-xl bg-gray-50 p-3 text-xs text-gray-500">
-          <FiLock /> This is demo data. Only the owner account can make changes.
+          <FiLock /> {lockedMessage}
         </p>
       )}
 
@@ -109,7 +112,7 @@ const EditUserModal = ({ user, canEdit, onSave, onClose }) => {
         <button onClick={onClose} className="btn-secondary flex-1 py-2.5">
           Close
         </button>
-        <button onClick={save} disabled={!canEdit || saving} className="btn-primary flex-1 py-2.5">
+        <button onClick={save} disabled={saving} className="btn-primary flex-1 py-2.5">
           {canEdit ? (
             saving ? (
               "Saving..."
@@ -127,7 +130,7 @@ const EditUserModal = ({ user, canEdit, onSave, onClose }) => {
   );
 };
 
-const UsersSection = ({ users, canEdit, onSaveUser }) => {
+const UsersSection = ({ users, canEdit, lockedMessage, onSaveUser }) => {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(0);
@@ -140,12 +143,12 @@ const UsersSection = ({ users, canEdit, onSaveUser }) => {
         if (filter === "online" && resolvePresence(u).status !== "online") return false;
         if (filter === "banned" && !u.banned) return false;
         if (!term) return true;
-        return [u.name, u.email, u.username, u.uniqueId].some((v) =>
-          v?.toLowerCase().includes(term)
-        );
+        // the guest only sees masked emails, so it can't search by them either
+        const fields = [u.name, u.username, u.uniqueId, canEdit ? u.email : null];
+        return fields.some((v) => v?.toLowerCase().includes(term));
       })
       .sort((a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0));
-  }, [users, search, filter]);
+  }, [users, search, filter, canEdit]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
@@ -162,7 +165,9 @@ const UsersSection = ({ users, canEdit, onSaveUser }) => {
               setSearch(e.target.value);
               setPage(0);
             }}
-            placeholder="Search name, email, username or ID"
+            placeholder={
+              canEdit ? "Search name, email, username or ID" : "Search name, username or ID"
+            }
             className="input-field py-2.5 pl-10"
           />
         </div>
@@ -219,7 +224,9 @@ const UsersSection = ({ users, canEdit, onSaveUser }) => {
                             </span>
                           )}
                         </p>
-                        <p className="truncate text-xs text-gray-400">{user.email}</p>
+                        <p className="truncate text-xs text-gray-400">
+                          {canEdit ? user.email : maskEmail(user.email)}
+                        </p>
                       </div>
                     </div>
                   </td>
@@ -291,6 +298,7 @@ const UsersSection = ({ users, canEdit, onSaveUser }) => {
           <EditUserModal
             user={editing}
             canEdit={canEdit}
+            lockedMessage={lockedMessage}
             onSave={onSaveUser}
             onClose={() => setEditing(null)}
           />

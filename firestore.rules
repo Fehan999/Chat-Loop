@@ -12,11 +12,20 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
-    // keep this email in sync with ADMIN_EMAIL in src/constants.js
+    // keep these emails in sync with ADMIN_EMAILS and GUEST_EMAIL in src/constants.js
     function isAdmin() {
       return signedIn()
-        && request.auth.token.email == 'business.ehansiddique@gmail.com'
+        && request.auth.token.email in ['itsfehan@gmail.com', 'business.ehansiddique@gmail.com']
         && request.auth.token.email_verified == true;
+    }
+
+    // the public guest login for the admin panel. it can look but never write
+    function isGuest() {
+      return signedIn() && request.auth.token.email == 'guest@chatloop-demo.app';
+    }
+
+    function canWrite() {
+      return signedIn() && !isGuest();
     }
 
     function changedKeys() {
@@ -44,10 +53,10 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if signedIn();
-      allow create: if isMe(userId) && !('banned' in request.resource.data);
+      allow create: if isMe(userId) && canWrite() && !('banned' in request.resource.data);
       allow update: if isAdmin()
-        || (isMe(userId) && !changedKeys().hasAny(['banned', 'banReason', 'bannedAt']))
-        || (signedIn() && onlyTouchesMyFriendship());
+        || (isMe(userId) && canWrite() && !changedKeys().hasAny(['banned', 'banReason', 'bannedAt']))
+        || (canWrite() && onlyTouchesMyFriendship());
       allow delete: if isAdmin();
     }
 
@@ -56,8 +65,8 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (signedIn() && resource.data.senderId == request.auth.uid)
         || (signedIn() && resource.data.receiverId == request.auth.uid);
-      allow create: if signedIn() && request.resource.data.senderId == request.auth.uid;
-      allow update: if signedIn()
+      allow create: if canWrite() && request.resource.data.senderId == request.auth.uid;
+      allow update: if canWrite()
         && request.auth.uid in [resource.data.senderId, resource.data.receiverId];
       allow delete: if isAdmin();
     }
@@ -66,7 +75,7 @@ service cloud.firestore {
       // resource is null for a chat that doesn't exist yet, getOrCreateChat reads first
       allow read: if isAdmin()
         || (signedIn() && (resource == null || request.auth.uid in resource.data.participants));
-      allow create: if signedIn()
+      allow create: if canWrite()
         && request.auth.uid in request.resource.data.participants
         && request.resource.data.participants.size() == 2;
       allow update: if signedIn() && request.auth.uid in resource.data.participants;
@@ -75,7 +84,7 @@ service cloud.firestore {
 
     match /messages/{chatId}/messages/{messageId} {
       allow read: if inChat(chatId) || isAdmin();
-      allow create: if inChat(chatId)
+      allow create: if inChat(chatId) && canWrite()
         && (request.resource.data.senderId == request.auth.uid
           || request.resource.data.get('type', '') == 'call');
       // the sender can edit or delete, the other person can react and mark read
@@ -97,7 +106,7 @@ service cloud.firestore {
 
     match /calls/{callId} {
       allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.callerId == request.auth.uid;
+      allow create: if canWrite() && request.resource.data.callerId == request.auth.uid;
       allow update: if signedIn()
         && request.auth.uid in [resource.data.callerId, resource.data.calleeId];
 
@@ -112,12 +121,13 @@ service cloud.firestore {
     }
 
     match /aiChats/{userId}/messages/{messageId} {
-      allow read, write: if isMe(userId);
+      allow read, write: if isMe(userId) && canWrite();
     }
 
     match /reports/{reportId} {
-      allow create: if signedIn() && request.resource.data.reportedBy == request.auth.uid;
-      allow read, update, delete: if isAdmin();
+      allow create: if canWrite() && request.resource.data.reportedBy == request.auth.uid;
+      allow read: if isAdmin() || isGuest();
+      allow update, delete: if isAdmin();
     }
 
     match /appConfig/{docId} {

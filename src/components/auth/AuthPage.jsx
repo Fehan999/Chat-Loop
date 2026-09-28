@@ -1,20 +1,27 @@
 import { motion } from "framer-motion";
 import { FiCheck, FiMic, FiPhone } from "react-icons/fi";
+import { DEVELOPER } from "../../developer";
+import { usePageTitle } from "../../hooks/usePageTitle";
+import AboutDeveloper from "../about/AboutDeveloper";
+import DeveloperLinks from "../about/DeveloperLinks";
 import Logo from "../brand/Logo";
 import AuthCard from "./AuthCard";
 
-const Credit = ({ light = false }) => (
-  <p className={`text-xs ${light ? "text-indigo-200" : "text-gray-400"}`}>
-    Designed & developed by{" "}
-    <a
-      href="https://www.ehansiddique.com"
-      target="_blank"
-      rel="noopener noreferrer"
-      className={`font-semibold hover:underline ${light ? "text-white" : "text-indigo-500"}`}
-    >
-      Ehan Siddique
-    </a>
-  </p>
+const Credit = () => (
+  <div className="relative space-y-3">
+    <p className="text-sm text-indigo-100">
+      Designed & developed by{" "}
+      <a
+        href={DEVELOPER.website}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="font-semibold text-white hover:underline"
+      >
+        {DEVELOPER.name}
+      </a>
+    </p>
+    <DeveloperLinks light />
+  </div>
 );
 
 // a small static copy of the chat screen so the login page feels like the app
@@ -61,65 +68,69 @@ const ChatPreview = () => (
   </div>
 );
 
-const AuthPage = () => (
-  <div className="flex min-h-[100dvh] bg-gray-50">
-    <aside className="relative hidden w-[46%] flex-col justify-between overflow-hidden bg-gradient-to-br from-indigo-500 via-indigo-600 to-violet-700 p-12 text-white lg:flex">
-      <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-white/10 blur-2xl" />
-      <div className="pointer-events-none absolute -bottom-32 -left-20 h-96 w-96 rounded-full bg-violet-400/20 blur-3xl" />
+const AuthPage = () => {
+  usePageTitle(null);
 
-      <Logo size={44} withText tone="glass" />
+  return (
+    <div className="flex min-h-[100dvh] bg-gray-50">
+      <aside className="relative hidden w-[46%] flex-col justify-between overflow-hidden bg-gradient-to-br from-indigo-500 via-indigo-600 to-violet-700 p-12 text-white lg:flex">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-white/10 blur-2xl" />
+        <div className="pointer-events-none absolute -bottom-32 -left-20 h-96 w-96 rounded-full bg-violet-400/20 blur-3xl" />
 
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="relative space-y-8"
-      >
-        <div>
-          <h1 className="text-4xl font-bold leading-tight xl:text-5xl">
-            Stay in the loop
-            <br />
-            with your people.
-          </h1>
-          <p className="mt-4 max-w-md text-indigo-100">
-            Messages, voice notes and calls in one place, plus an AI helper for when you need a
-            quick answer.
-          </p>
+        <Logo size={44} withText tone="glass" />
+
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="relative space-y-8"
+        >
+          <div>
+            <h1 className="text-4xl font-bold leading-tight xl:text-5xl">
+              Stay in the loop
+              <br />
+              with your people.
+            </h1>
+            <p className="mt-4 max-w-md text-indigo-100">
+              Messages, voice notes and calls in one place, plus an AI helper for when you need a
+              quick answer.
+            </p>
+          </div>
+
+          <ul className="space-y-2 text-sm text-indigo-50">
+            {[
+              "Real-time chat with read receipts",
+              "Voice notes, photos and files",
+              "Audio and video calls",
+            ].map((item) => (
+              <li key={item} className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/20">
+                  <FiCheck size={12} />
+                </span>
+                {item}
+              </li>
+            ))}
+          </ul>
+
+          <ChatPreview />
+        </motion.div>
+
+        <Credit />
+      </aside>
+
+      <main className="flex flex-1 items-center justify-center px-4 py-10 sm:px-8">
+        <div className="w-full max-w-md">
+          <div className="mb-8 flex justify-center lg:hidden">
+            <Logo size={44} withText />
+          </div>
+          <AuthCard />
+          <div className="mt-6">
+            <AboutDeveloper />
+          </div>
         </div>
-
-        <ul className="space-y-2 text-sm text-indigo-50">
-          {[
-            "Real-time chat with read receipts",
-            "Voice notes, photos and files",
-            "Audio and video calls",
-          ].map((item) => (
-            <li key={item} className="flex items-center gap-2">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/20">
-                <FiCheck size={12} />
-              </span>
-              {item}
-            </li>
-          ))}
-        </ul>
-
-        <ChatPreview />
-      </motion.div>
-
-      <Credit light />
-    </aside>
-
-    <main className="flex flex-1 items-center justify-center px-4 py-10 sm:px-8">
-      <div className="w-full max-w-md">
-        <div className="mb-8 flex justify-center lg:hidden">
-          <Logo size={44} withText />
-        </div>
-        <AuthCard />
-        <div className="mt-8 text-center lg:hidden">
-          <Credit />
-        </div>
-      </div>
-    </main>
-  </div>
-);
+      </main>
+    </div>
+  );
+};
 
 export default AuthPage;

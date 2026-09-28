@@ -1,7 +1,12 @@
 export const APP_NAME = "ChatLoop";
 
-// only this account can change anything in the admin panel
-export const ADMIN_EMAIL = "business.ehansiddique@gmail.com";
+// full admin access, needs a verified email. keep in sync with isAdmin() in firestore.rules
+export const ADMIN_EMAILS = ["itsfehan@gmail.com", "business.ehansiddique@gmail.com"];
+
+// public guest login for the admin panel. it can read the dashboard but every
+// write is blocked, both here and in firestore.rules (isGuest)
+export const GUEST_EMAIL = "guest@chatloop-demo.app";
+export const GUEST_PASSWORD = "ChatLoopGuest2026";
 
 export const AI_CHAT_KEY = "chatloop-ai";
 export const AI_NAME = "ChatLoop AI";

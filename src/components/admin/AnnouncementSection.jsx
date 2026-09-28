@@ -50,12 +50,12 @@ const AnnouncementSection = ({ announcement, canEdit, onSave }) => {
         </div>
         <button
           onClick={save}
-          disabled={!canEdit || !changed || saving}
+          disabled={canEdit && (!changed || saving)}
           className="btn-primary w-full"
         >
           {!canEdit ? (
             <>
-              <FiLock /> Owner only
+              <FiLock /> Admin only
             </>
           ) : saving ? (
             "Saving..."

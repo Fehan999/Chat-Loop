@@ -1,6 +1,7 @@
 import { FiAlertTriangle, FiMessageSquare, FiUserCheck, FiUsers } from "react-icons/fi";
 import { formatRelativeTime } from "../../utils/dateUtils";
 import { resolvePresence } from "../../utils/statusHelper";
+import { maskEmail } from "../../firebase/adminService";
 import { avatarFor } from "../../utils/userDisplay";
 import SignupsChart from "./SignupsChart";
 
@@ -26,7 +27,7 @@ const StatTile = ({ icon: Icon, label, value, hint }) => (
   </div>
 );
 
-const OverviewSection = ({ users, reports, counts, onOpen }) => {
+const OverviewSection = ({ users, reports, counts, canEdit, onOpen }) => {
   const online = users.filter((u) => resolvePresence(u).status === "online").length;
   const pending = reports.filter((r) => r.status === "pending");
   const newest = [...users]
@@ -44,7 +45,11 @@ const OverviewSection = ({ users, reports, counts, onOpen }) => {
           label="Messages sent"
           value={counts.messages}
           hint={
-            counts.conversations !== null ? `across ${compact(counts.conversations)} chats` : null
+            !canEdit
+              ? "admin only"
+              : counts.conversations !== null
+                ? `across ${compact(counts.conversations)} chats`
+                : null
           }
         />
         <StatTile icon={FiAlertTriangle} label="Open reports" value={pending.length} />
@@ -71,7 +76,9 @@ const OverviewSection = ({ users, reports, counts, onOpen }) => {
                 <img src={avatarFor(user)} alt="" className="h-9 w-9 rounded-full object-cover" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-gray-900">{user.name}</p>
-                  <p className="truncate text-xs text-gray-400">{user.email}</p>
+                  <p className="truncate text-xs text-gray-400">
+                    {canEdit ? user.email : maskEmail(user.email)}
+                  </p>
                 </div>
                 <span className="text-xs text-gray-400">{formatRelativeTime(user.createdAt)}</span>
               </li>

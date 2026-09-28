@@ -11,18 +11,29 @@ import {
   setDoc,
   updateDoc,
 } from "firebase/firestore";
-import { ADMIN_EMAIL } from "../constants";
+import { ADMIN_EMAILS, GUEST_EMAIL } from "../constants";
 import { toDate } from "../utils/dateUtils";
 import { db } from "./config";
 
-// the same check lives in firestore.rules, this one only decides what the ui shows
+const emailOf = (user) => user?.email?.toLowerCase() || "";
+
+// the same checks live in firestore.rules, these only decide what the ui shows
 export const isOwnerAccount = (user) =>
-  !!user && user.email?.toLowerCase() === ADMIN_EMAIL && user.emailVerified === true;
+  ADMIN_EMAILS.includes(emailOf(user)) && user.emailVerified === true;
 
 export const ownerNeedsVerification = (user) =>
-  !!user && user.email?.toLowerCase() === ADMIN_EMAIL && !user.emailVerified;
+  ADMIN_EMAILS.includes(emailOf(user)) && !user.emailVerified;
 
-// everything below is only ever called in owner mode
+export const isGuestAccount = (user) => emailOf(user) === GUEST_EMAIL;
+
+// shown to guests instead of the real address, e.g. "jo•••@gmail.com"
+export const maskEmail = (email = "") => {
+  const [name, domain] = email.split("@");
+  if (!domain) return email;
+  return `${name.slice(0, 2)}•••@${domain}`;
+};
+
+// the listeners are used by the owner and the guest login, the writes are owner only
 
 export const listenToAllUsers = (callback) =>
   onSnapshot(
@@ -41,7 +52,11 @@ export const listenToAllUsers = (callback) =>
             };
           })
       ),
-    (error) => console.error("Admin users listener failed:", error)
+    (error) => {
+      // usually means the latest firestore.rules aren't deployed yet
+      console.error("Admin users listener failed:", error);
+      callback([]);
+    }
   );
 
 export const listenToReports = (callback) =>
@@ -54,10 +69,15 @@ export const listenToReports = (callback) =>
           return { id: d.id, ...data, createdAt: toDate(data.createdAt) };
         })
       ),
-    (error) => console.error("Admin reports listener failed:", error)
+    (error) => {
+      // usually means the latest firestore.rules aren't deployed yet
+      console.error("Admin reports listener failed:", error);
+      callback([]);
+    }
   );
 
-// counts are aggregation queries, firestore doesn't download the documents
+// counts are aggregation queries, firestore doesn't download the documents.
+// they need read access to every chat though, so only the owner gets them
 export const fetchCounts = async () => {
   const [chats, messages] = await Promise.all([
     getCountFromServer(collection(db, "chats")),

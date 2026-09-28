@@ -5,6 +5,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AuthPage from "./components/auth/AuthPage";
 import ResetPasswordPage from "./components/auth/ResetPasswordPage";
 import SplashScreen from "./components/common/SplashScreen";
+import { isGuestAccount } from "./firebase/adminService";
 import { auth } from "./firebase/config";
 import { initializeUserStatus } from "./service/userStatus";
 
@@ -29,14 +30,21 @@ function App() {
 
   if (loading) return <SplashScreen />;
 
+  // the guest login only exists for the admin panel, it has no chat profile
+  const isGuest = isGuestAccount(user);
+  const home = !user ? (
+    <Navigate to="/auth" replace />
+  ) : isGuest ? (
+    <Navigate to="/admin" replace />
+  ) : (
+    <ChatDashboard user={user} />
+  );
+
   return (
     <BrowserRouter>
       <Suspense fallback={<SplashScreen />}>
         <Routes>
-          <Route
-            path="/"
-            element={user ? <ChatDashboard user={user} /> : <Navigate to="/auth" replace />}
-          />
+          <Route path="/" element={home} />
           <Route path="/auth" element={!user ? <AuthPage /> : <Navigate to="/" replace />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/admin" element={<AdminPage user={user} />} />

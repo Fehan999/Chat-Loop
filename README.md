@@ -105,19 +105,26 @@ profiles/…  profile pictures
 
 ## The admin panel
 
-Open `/admin`. Anyone can look around, but visitors see **made-up demo data** and every
-action is locked. Real data and working buttons only show up for the owner account:
+Open `/admin`. It starts with a login screen and there are two ways in:
 
-- the email in `ADMIN_EMAIL` (`src/constants.js`)
-- **and** that email has to be verified (Google sign-in is verified automatically,
-  email/password accounts get a "Send verification email" button on the admin page)
+**Admin accounts** - `itsfehan@gmail.com` and `business.ehansiddique@gmail.com` (`ADMIN_EMAILS`
+in `src/constants.js`). The email has to be verified: Google sign-in is verified automatically,
+email/password accounts get a "Send email" button on the admin page. Admins can edit profiles,
+suspend accounts (they get a suspended screen on their next load), work through reports, remove
+reported messages and publish a banner that shows at the top of everyone's chat screen.
 
-The same check is in `firestore.rules` (`isAdmin()`), so the lock isn't just the UI. If you
-change the owner email, change it in both places.
+**Guest login** - the credentials are shown right on the login screen
+(`GUEST_EMAIL` / `GUEST_PASSWORD` in `src/constants.js`). The guest sees the live dashboard,
+users and reports, but every button just says "You're logged in as guest, you can't edit or take
+action". Emails are partly hidden and the message counts stay admin only, since counting them
+needs access to private chats. The first guest login creates the Firebase account on its own, so
+there's nothing to set up besides having Email/Password sign-in enabled.
 
-From the panel the owner can edit profiles, suspend accounts (they get a suspended screen
-on their next load), work through reports, remove reported messages and publish a banner
-that shows at the top of everyone's chat screen.
+The same checks are in `firestore.rules` (`isAdmin()` and `isGuest()`), so the lock isn't just
+the UI: the guest account can't write anything anywhere. If you change any of these emails,
+change them in both places and redeploy the rules.
+
+Normal users don't get an admin button in the app, only admin accounts see it in the sidebar.
 
 ---
 
@@ -131,7 +138,8 @@ around without reading every file.
 ```
 src/
   App.jsx                  routes + auth listener, dashboard and admin are lazy loaded
-  constants.js             app wide settings (admin email, limits, page sizes)
+  constants.js             app wide settings (admin emails, guest login, limits)
+  developer.js             my details, used on the login pages and for seo
   index.css                tailwind + shared classes (.btn-primary, .input-field, .card) + logo css
   components/
     brand/Logo.jsx         the logo, pure html/css
@@ -149,7 +157,8 @@ src/
       call/                call screen and incoming call modal
       add_friend/          the friends panel (discover, friends, requests, sent)
       ai/                  ChatLoop AI chat
-    admin/                 admin panel sections + demo data
+    admin/                 admin login, dashboard sections
+    about/                 the "built by" card and links on the login pages
   firebase/                everything that talks to Firestore, one file per area
   service/                 presence (online/away/offline) and the WebRTC session
   hooks/                   useLiveProfiles, useAdminData, media query helpers
@@ -274,5 +283,14 @@ Remember to set `VITE_GEMINI_API_KEY` in the host's environment settings too.
 - The public TURN server is fine for demos but not something to rely on.
 
 ---
+
+## About me
+
+I'm **Ehan Siddique**, a full-stack web developer. I designed and built ChatLoop on my own as a
+personal project, from the chat and calls to the AI helper and the admin panel.
+
+- Website: [ehansiddique.com](https://www.ehansiddique.com)
+- LinkedIn: [linkedin.com/in/ehan-siddique-0742aa34b](https://www.linkedin.com/in/ehan-siddique-0742aa34b/)
+- GitHub: [github.com/Fehan999](https://github.com/Fehan999)
 
 <p align="center">Designed & developed by <a href="https://www.ehansiddique.com">Ehan Siddique</a></p>

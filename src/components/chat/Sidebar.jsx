@@ -2,6 +2,8 @@ import { useState } from "react";
 import { FiLogOut, FiSearch, FiSettings, FiShield, FiUserPlus, FiX } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import { AI_CHAT_KEY, AI_NAME } from "../../constants";
+import { isOwnerAccount } from "../../firebase/adminService";
+import { auth } from "../../firebase/config";
 import { logout } from "../../service/userStatus";
 import { formatChatListTime } from "../../utils/dateUtils";
 import { getStatusDotClass } from "../../utils/statusHelper";
@@ -185,9 +187,11 @@ const Sidebar = ({
             <p className="truncate text-xs text-gray-400">{me.username}</p>
           </div>
         </button>
-        <Link to="/admin" className="icon-btn" title="Admin panel">
-          <FiShield />
-        </Link>
+        {isOwnerAccount(auth.currentUser) && (
+          <Link to="/admin" className="icon-btn" title="Admin panel">
+            <FiShield />
+          </Link>
+        )}
         <button onClick={logout} className="icon-btn hover:text-red-500" title="Log out">
           <FiLogOut />
         </button>
