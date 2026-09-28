@@ -1,8 +1,7 @@
-// components/chat/MessageInput.jsx
-import EmojiPicker from "emoji-picker-react";
 import { AnimatePresence, motion } from "framer-motion";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
+import toast from "react-hot-toast";
 import {
   FiFile,
   FiImage,
@@ -13,485 +12,384 @@ import {
   FiSmile,
   FiX,
 } from "react-icons/fi";
+import { MAX_FILE_SIZE, MAX_IMAGES_PER_MESSAGE } from "../../constants";
 import { updateTypingStatus } from "../../firebase/firestoreService";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { uploadFileToSupabase } from "../../utils/supabase";
 import VoiceRecorder from "./VoiceRecorder";
 
-const MAX_IMAGES = 5;
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const EmojiPicker = lazy(() => import("emoji-picker-react"));
+
+const TYPING_IDLE_MS = 2500;
+
+const formatFileSize = (bytes) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+};
+
+const voiceExtension = (mimeType) => {
+  if (mimeType.includes("mp4")) return "m4a";
+  if (mimeType.includes("ogg")) return "ogg";
+  return "webm";
+};
 
 const MessageInput = ({
   onSendMessage,
   placeholder = "Type a message...",
   currentUser,
   chatId,
-  userData,
+  chatReady,
 }) => {
   const [message, setMessage] = useState("");
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState({});
-  const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
-  const typingTimeoutRef = useRef(null);
-  const lastTypingStatusRef = useRef(false);
+  const [recording, setRecording] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+
+  const textareaRef = useRef(null);
+  const emojiRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
+  const typingRef = useRef({ active: false, timer: null });
+  // on phones the enter key should add a new line, there's a send button
+  const isTouch = useMediaQuery("(pointer: coarse)");
 
-  const sendTypingStatus = useCallback(
-    async (isTyping) => {
-      if (lastTypingStatusRef.current !== isTyping) {
-        lastTypingStatusRef.current = isTyping;
-        await updateTypingStatus(chatId, currentUser?.uid, isTyping);
-      }
+  const uid = currentUser?.uid;
+
+  // typing indicator: one write when you start, one when you stop or go quiet
+  const setTyping = useCallback(
+    (active) => {
+      const state = typingRef.current;
+      clearTimeout(state.timer);
+      if (active) state.timer = setTimeout(() => setTyping(false), TYPING_IDLE_MS);
+      if (state.active === active || !chatReady) return;
+      state.active = active;
+      updateTypingStatus(chatId, uid, active);
     },
-    [chatId, currentUser]
+    [chatId, chatReady, uid]
   );
 
   useEffect(() => {
-    if (!chatId || !currentUser) return;
-
-    if (message.length > 0) {
-      sendTypingStatus(true);
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = setTimeout(
-        () => sendTypingStatus(false),
-        2000
-      );
-    } else {
-      sendTypingStatus(false);
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    }
-
+    const state = typingRef.current;
     return () => {
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      clearTimeout(state.timer);
+      if (state.active) updateTypingStatus(chatId, uid, false);
+      state.active = false;
     };
-  }, [message, chatId, currentUser, sendTypingStatus]);
+  }, [chatId, uid]);
+
+  // grow the textarea with its content, up to a limit
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  }, [message]);
 
   useEffect(() => {
-    return () => {
-      if (chatId && currentUser) {
-        updateTypingStatus(chatId, currentUser.uid, false);
-      }
-    };
-  }, [chatId, currentUser]);
+    if (!showEmoji) return undefined;
+    const close = (e) => !emojiRef.current?.contains(e.target) && setShowEmoji(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [showEmoji]);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop: (acceptedFiles) => {
-      addFiles(acceptedFiles);
-    },
-    noClick: true,
-    accept: {
-      "image/*": [".jpeg", ".jpg", ".png", ".gif", ".webp"],
-      "application/pdf": [".pdf"],
-      "application/msword": [".doc"],
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        [".docx"],
-      "text/plain": [".txt"],
-    },
-  });
+  // previews are object urls, free them when the input goes away
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  useEffect(
+    () => () => attachmentsRef.current.forEach((a) => a.preview && URL.revokeObjectURL(a.preview)),
+    []
+  );
 
   const addFiles = (files) => {
-    // Check total images limit
-    const currentImageCount = attachments.filter((a) =>
-      a.type?.startsWith("image/")
-    ).length;
-    const newImages = files.filter((f) => f.type?.startsWith("image/"));
-    const newFiles = files.filter((f) => !f.type?.startsWith("image/"));
+    if (!files.length) return;
+    const tooBig = files.filter((f) => f.size > MAX_FILE_SIZE);
+    if (tooBig.length) toast.error("Files over 10 MB can't be sent.");
 
-    if (currentImageCount + newImages.length > MAX_IMAGES) {
-      alert(`You can only upload up to ${MAX_IMAGES} images at once`);
+    const allowed = files.filter((f) => f.size <= MAX_FILE_SIZE);
+    const imageCount = attachments.filter((a) => a.type.startsWith("image/")).length;
+    const newImages = allowed.filter((f) => f.type.startsWith("image/"));
+    if (imageCount + newImages.length > MAX_IMAGES_PER_MESSAGE) {
+      toast.error(`You can send up to ${MAX_IMAGES_PER_MESSAGE} images at once.`);
       return;
     }
 
-    // Check file sizes
-    const oversizedFiles = files.filter((f) => f.size > MAX_FILE_SIZE);
-    if (oversizedFiles.length > 0) {
-      alert(`Files larger than 10MB cannot be uploaded`);
-      return;
+    setAttachments((prev) => [
+      ...prev,
+      ...allowed.map((file) => ({
+        id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`,
+        file,
+        name: file.name,
+        type: file.type || "application/octet-stream",
+        size: file.size,
+        preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
+      })),
+    ]);
+    textareaRef.current?.focus();
+  };
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: addFiles,
+    noClick: true,
+    noKeyboard: true,
+  });
+
+  const removeAttachment = (id) => {
+    setAttachments((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target?.preview) URL.revokeObjectURL(target.preview);
+      return prev.filter((a) => a.id !== id);
+    });
+  };
+
+  // screenshots pasted straight into the box become attachments
+  const handlePaste = (e) => {
+    const files = Array.from(e.clipboardData?.files || []);
+    if (files.length) {
+      e.preventDefault();
+      addFiles(files);
     }
-
-    const filesWithPreview = files.map((file) => ({
-      id: Date.now() + Math.random(),
-      file: file,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      preview: file.type?.startsWith("image/")
-        ? URL.createObjectURL(file)
-        : null,
-      uploading: false,
-      uploaded: false,
-    }));
-
-    setAttachments((prev) => [...prev, ...filesWithPreview]);
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if ((message.trim() || attachments.length > 0) && !uploading) {
-      let uploadedFiles = [];
+    e?.preventDefault();
+    const text = message.trim();
+    if ((!text && attachments.length === 0) || uploading) return;
 
-      if (attachments.length > 0) {
-        setUploading(true);
+    setTyping(false);
+    const pending = attachments;
+    let uploaded = [];
 
-        // Mark all as uploading
-        setAttachments((prev) =>
-          prev.map((att) => ({ ...att, uploading: true }))
-        );
+    if (pending.length) {
+      setUploading(true);
+      const stamp = Date.now();
+      // uploads run side by side instead of one after another
+      const results = await Promise.all(
+        pending.map((a, i) => uploadFileToSupabase(a.file, chatId, `${stamp}_${i}`))
+      );
+      uploaded = results.filter(Boolean);
+      setUploading(false);
 
-        // Upload files sequentially with progress
-        for (let i = 0; i < attachments.length; i++) {
-          const attachment = attachments[i];
-          const messageId = Date.now().toString();
-
-          setUploadProgress((prev) => ({ ...prev, [attachment.id]: 0 }));
-
-          const uploadedFile = await uploadFileToSupabase(
-            attachment.file,
-            chatId,
-            `${messageId}_${i}`,
-            attachment.type?.startsWith("image/") ? "image" : "file"
-          );
-
-          if (uploadedFile) {
-            uploadedFiles.push({
-              ...uploadedFile,
-              localId: attachment.id,
-            });
-            setUploadProgress((prev) => ({ ...prev, [attachment.id]: 100 }));
-          }
-
-          // Update progress for visual feedback
-          setAttachments((prev) =>
-            prev.map((att) =>
-              att.id === attachment.id
-                ? { ...att, uploaded: !!uploadedFile }
-                : att
-            )
-          );
-        }
-
-        setUploading(false);
+      if (uploaded.length < pending.length) {
+        toast.error("Some files couldn't be uploaded.");
+        if (!uploaded.length && !text) return;
       }
-
-      onSendMessage(message, uploadedFiles);
-      setMessage("");
-
-      // Clean up preview URLs
-      attachments.forEach((att) => {
-        if (att.preview) URL.revokeObjectURL(att.preview);
-      });
+      pending.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
       setAttachments([]);
-      setUploadProgress({});
-      sendTypingStatus(false);
     }
+
+    setMessage("");
+    const ok = await onSendMessage(text, uploaded);
+    if (!ok && text) setMessage(text);
   };
 
-  const handleSendVoice = async (audioBlob, duration) => {
-    if (!chatId || !currentUser) return;
-
+  const handleSendVoice = async (blob, duration, waveform, mimeType) => {
+    setRecording(false);
     setUploading(true);
+    const baseType = mimeType.split(";")[0];
+    const file = new File([blob], `voice_${Date.now()}.${voiceExtension(baseType)}`, {
+      type: baseType,
+    });
 
-    try {
-      const messageId = Date.now().toString();
+    const uploaded = await uploadFileToSupabase(file, chatId, Date.now().toString());
+    setUploading(false);
+    if (!uploaded) {
+      toast.error("Voice message failed to upload.");
+      return;
+    }
 
-      // Create file from blob
-      const voiceFile = new File([audioBlob], `voice_${Date.now()}.webm`, {
-        type: "audio/webm",
-      });
-
-      // Upload to Supabase
-      const uploaded = await uploadFileToSupabase(
-        voiceFile,
-        chatId,
-        messageId,
-        "voice"
-      );
-
-      if (!uploaded) {
-        throw new Error("Upload failed");
-      }
-
-      // Create voice file object
-      const voiceFileObj = {
+    await onSendMessage("", [
+      {
         name: "Voice message",
         url: uploaded.url,
-        type: "audio/webm",
-        duration: duration,
-        isVoice: true,
         path: uploaded.path,
-      };
-
-      // Send as message
-      onSendMessage("🎤 Voice message", [voiceFileObj]);
-    } catch (error) {
-      console.error("Error sending voice message:", error);
-      alert("Failed to send voice message. Please try again.");
-    } finally {
-      setUploading(false);
-      setShowVoiceRecorder(false);
-    }
+        type: baseType,
+        size: uploaded.size,
+        duration: Math.round(duration * 10) / 10,
+        waveform,
+        isVoice: true,
+      },
+    ]);
   };
 
-  const handleEmojiClick = (emojiData) => {
-    setMessage((prev) => prev + emojiData.emoji);
-    setShowEmojiPicker(false);
-  };
-
-  const handleFileSelect = (e, type = "file") => {
-    const files = Array.from(e.target.files);
-
-    if (type === "image") {
-      const images = files.filter((file) => file.type.startsWith("image/"));
-      addFiles(images);
-    } else {
-      addFiles(files);
-    }
-
-    // Clear input
-    e.target.value = "";
-  };
-
-  const removeAttachment = (index) => {
-    const attachment = attachments[index];
-    if (attachment.preview) {
-      URL.revokeObjectURL(attachment.preview);
-    }
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
-    // Remove from progress
-    if (attachment.id) {
-      setUploadProgress((prev) => {
-        const newProgress = { ...prev };
-        delete newProgress[attachment.id];
-        return newProgress;
-      });
-    }
-  };
-
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
-  const remainingImageSlots =
-    MAX_IMAGES - attachments.filter((a) => a.type?.startsWith("image/")).length;
+  const canSend = message.trim() || attachments.length > 0;
+  const imageSlotsLeft =
+    MAX_IMAGES_PER_MESSAGE - attachments.filter((a) => a.type.startsWith("image/")).length;
 
   return (
-    <div className="border-t border-gray-200 bg-white" {...getRootProps()}>
-      {/* Voice Recorder Modal */}
-      <AnimatePresence>
-        {showVoiceRecorder && (
-          <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ type: "spring", damping: 25 }}
-            className="absolute bottom-20 left-4 right-4 z-50"
-          >
-            <VoiceRecorder
-              onSendVoice={handleSendVoice}
-              onCancel={() => setShowVoiceRecorder(false)}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div {...getRootProps({ className: "relative border-t border-gray-100 bg-white" })}>
+      <input {...getInputProps()} />
 
-      {/* Attachments Preview */}
+      {isDragActive && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-t-xl border-2 border-dashed border-indigo-300 bg-indigo-50/90 text-sm font-medium text-indigo-600">
+          Drop files to attach
+        </div>
+      )}
+
       <AnimatePresence>
         {attachments.length > 0 && (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="px-3 pt-3 flex flex-wrap gap-2 border-b border-gray-100 max-h-32 overflow-y-auto"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="thin-scroll flex gap-2 overflow-x-auto px-3 pt-3"
           >
-            {attachments.map((file, index) => (
-              <motion.div
-                key={file.id || index}
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.9, opacity: 0 }}
-                className="relative bg-gray-100 rounded-lg p-2 flex items-center gap-2 text-sm group"
+            {attachments.map((file) => (
+              <div
+                key={file.id}
+                className="group relative flex flex-shrink-0 items-center gap-2 rounded-xl bg-gray-100 p-1.5 pr-3"
               >
-                {file.type?.startsWith("image/") ? (
-                  <div className="relative w-12 h-12 rounded-lg overflow-hidden">
-                    <img
-                      src={file.preview}
-                      alt={file.name}
-                      className="w-full h-full object-cover"
-                    />
-                    {file.uploading && (
-                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                        <FiLoader className="text-white animate-spin" />
-                      </div>
-                    )}
-                  </div>
+                {file.preview ? (
+                  <img src={file.preview} alt="" className="h-12 w-12 rounded-lg object-cover" />
                 ) : (
-                  <div className="relative">
-                    <FiFile className="text-gray-600 text-xl" />
-                    {file.uploading && (
-                      <div className="absolute inset-0 bg-white/80 rounded-full flex items-center justify-center">
-                        <FiLoader className="text-gray-600 animate-spin text-xs" />
-                      </div>
-                    )}
-                  </div>
+                  <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-white text-indigo-500">
+                    <FiFile className="text-lg" />
+                  </span>
                 )}
-                <div className="flex flex-col">
-                  <span className="text-gray-700 max-w-[150px] truncate text-xs">
-                    {file.name}
-                  </span>
-                  <span className="text-gray-400 text-xs">
-                    {formatFileSize(file.size)}
-                  </span>
-                  {uploadProgress[file.id] > 0 &&
-                    uploadProgress[file.id] < 100 && (
-                      <div className="w-full h-1 bg-gray-200 rounded-full mt-1">
-                        <div
-                          className="h-full bg-indigo-500 rounded-full transition-all"
-                          style={{ width: `${uploadProgress[file.id]}%` }}
-                        />
-                      </div>
-                    )}
+                <div className="max-w-[120px]">
+                  <p className="truncate text-xs font-medium text-gray-700">{file.name}</p>
+                  <p className="text-[11px] text-gray-400">{formatFileSize(file.size)}</p>
                 </div>
-                <button
-                  onClick={() => removeAttachment(index)}
-                  disabled={file.uploading}
-                  className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-                >
-                  <FiX className="text-xs" />
-                </button>
-              </motion.div>
+                {uploading ? (
+                  <FiLoader className="animate-spin text-indigo-500" />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(file.id)}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-gray-700 text-white shadow"
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    <FiX className="text-xs" />
+                  </button>
+                )}
+              </div>
             ))}
           </motion.div>
         )}
       </AnimatePresence>
 
-      <form onSubmit={handleSubmit} className="p-3">
-        <div className="flex items-end gap-2">
-          <div className="flex-1 bg-gray-100 rounded-2xl px-4 py-2 flex items-center gap-2">
-            {/* Emoji Picker */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <FiSmile className="text-xl" />
-              </button>
-              {showEmojiPicker && (
-                <div className="absolute bottom-full left-0 mb-2 z-10">
-                  <EmojiPicker onEmojiClick={handleEmojiClick} />
-                </div>
-              )}
-            </div>
+      <div className="p-3">
+        {recording ? (
+          <VoiceRecorder onSend={handleSendVoice} onCancel={() => setRecording(false)} />
+        ) : (
+          <form onSubmit={handleSubmit} className="flex items-end gap-2">
+            <div className="flex min-h-[44px] flex-1 items-end gap-1 rounded-3xl bg-gray-100 px-2 py-1.5">
+              <div ref={emojiRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowEmoji((v) => !v)}
+                  className="icon-btn p-1.5"
+                  aria-label="Emoji"
+                >
+                  <FiSmile className="text-xl" />
+                </button>
+                {showEmoji && (
+                  <div className="absolute bottom-full left-0 z-30 mb-3 shadow-xl">
+                    <Suspense
+                      fallback={<div className="h-[380px] w-[320px] rounded-xl bg-white" />}
+                    >
+                      <EmojiPicker
+                        width={320}
+                        height={380}
+                        lazyLoadEmojis
+                        emojiStyle="native"
+                        previewConfig={{ showPreview: false }}
+                        onEmojiClick={(data) => setMessage((prev) => prev + data.emoji)}
+                      />
+                    </Suspense>
+                  </div>
+                )}
+              </div>
 
-            {/* Image Attachment - with limit indicator */}
-            <div className="relative group">
+              <textarea
+                ref={textareaRef}
+                value={message}
+                onChange={(e) => {
+                  setMessage(e.target.value);
+                  setTyping(e.target.value.length > 0);
+                }}
+                onPaste={handlePaste}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && !isTouch) {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }}
+                placeholder={placeholder}
+                rows={1}
+                disabled={uploading}
+                className="thin-scroll max-h-[140px] flex-1 resize-none bg-transparent px-1 py-1.5 text-[15px] text-gray-900 placeholder-gray-400 outline-none"
+              />
+
               <button
                 type="button"
                 onClick={() => imageInputRef.current?.click()}
-                disabled={remainingImageSlots === 0}
-                className={`text-gray-400 hover:text-gray-600 transition-colors ${
-                  remainingImageSlots === 0
-                    ? "opacity-50 cursor-not-allowed"
-                    : ""
-                }`}
-                title={
-                  remainingImageSlots > 0
-                    ? `Add image (${remainingImageSlots} left)`
-                    : "Maximum 5 images"
-                }
+                disabled={imageSlotsLeft <= 0 || uploading}
+                className="icon-btn p-1.5"
+                title="Send photos"
               >
                 <FiImage className="text-xl" />
               </button>
-              {remainingImageSlots < MAX_IMAGES && (
-                <span className="absolute -top-1 -right-1 text-[10px] bg-indigo-500 text-white rounded-full w-4 h-4 flex items-center justify-center">
-                  {remainingImageSlots}
-                </span>
-              )}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="icon-btn p-1.5"
+                title="Attach a file"
+              >
+                <FiPaperclip className="text-xl" />
+              </button>
+
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  addFiles(Array.from(e.target.files || []));
+                  e.target.value = "";
+                }}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  addFiles(Array.from(e.target.files || []));
+                  e.target.value = "";
+                }}
+              />
             </div>
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(e) => handleFileSelect(e, "image")}
-              className="hidden"
-            />
 
-            {/* File Attachment */}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <FiPaperclip className="text-xl" />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={(e) => handleFileSelect(e, "file")}
-              className="hidden"
-            />
-            <input {...getInputProps()} />
-
-            {/* Text Input */}
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder={isDragActive ? "Drop files here..." : placeholder}
-              rows="1"
-              className="flex-1 bg-transparent outline-none text-gray-900 placeholder-gray-400 text-sm resize-none py-2 max-h-32"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSubmit(e);
-                }
-              }}
-            />
-          </div>
-
-          {message.trim() || attachments.length > 0 ? (
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              type="submit"
-              disabled={uploading}
-              className="p-3 bg-indigo-500 text-white rounded-full shadow-md hover:bg-indigo-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {uploading ? (
-                <FiLoader className="text-lg animate-spin" />
-              ) : (
-                <FiSend className="text-lg" />
-              )}
-            </motion.button>
-          ) : (
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              type="button"
-              onClick={() => setShowVoiceRecorder(true)}
-              className="p-3 bg-gray-100 text-gray-600 rounded-full hover:bg-gray-200 transition-colors"
-            >
-              <FiMic className="text-lg" />
-            </motion.button>
-          )}
-        </div>
-
-        {/* File limit indicator */}
-        {attachments.length > 0 && (
-          <div className="text-xs text-gray-400 mt-2 text-center">
-            {attachments.filter((a) => a.type?.startsWith("image/")).length} /{" "}
-            {MAX_IMAGES} images • Total:{" "}
-            {formatFileSize(attachments.reduce((sum, a) => sum + a.size, 0))}
-          </div>
+            {canSend || uploading ? (
+              <button
+                type="submit"
+                disabled={uploading}
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-600 active:scale-95 disabled:opacity-60"
+                aria-label="Send"
+              >
+                {uploading ? (
+                  <FiLoader className="animate-spin text-lg" />
+                ) : (
+                  <FiSend className="text-lg" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setRecording(true)}
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-600 active:scale-95"
+                aria-label="Record a voice message"
+              >
+                <FiMic className="text-lg" />
+              </button>
+            )}
+          </form>
         )}
-      </form>
+      </div>
     </div>
   );
 };

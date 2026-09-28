@@ -1,252 +1,193 @@
-// components/chat/VoiceRecorder.jsx
-import { AnimatePresence, motion } from "framer-motion";
-import React, { useEffect, useRef, useState } from "react";
-import { FiMic, FiSend, FiTrash2 } from "react-icons/fi";
+import { useEffect, useRef, useState } from "react";
+import toast from "react-hot-toast";
+import { FiSend, FiTrash2 } from "react-icons/fi";
+import { MAX_VOICE_SECONDS } from "../../constants";
+import { formatDuration } from "../../utils/dateUtils";
 
-const VoiceRecorder = ({ onSendVoice, onCancel, onMinimize }) => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [audioBlob, setAudioBlob] = useState(null);
-  const [audioUrl, setAudioUrl] = useState(null);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [waveform, setWaveform] = useState(Array(30).fill(0));
-  const [isHolding, setIsHolding] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+const LIVE_BARS = 32;
+const SAVED_BARS = 28;
 
-  const mediaRecorder = useRef(null);
-  const audioChunks = useRef([]);
-  const audioRef = useRef(null);
-  const timerRef = useRef(null);
-  const streamRef = useRef(null);
-  const animationRef = useRef(null);
-  const holdTimeoutRef = useRef(null);
+// safari can't record webm, so pick whatever this browser supports
+const pickMimeType = () => {
+  const options = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+  return options.find((type) => window.MediaRecorder?.isTypeSupported?.(type)) || "";
+};
 
-  // Animate waveform
-  const animateWaveform = () => {
-    const newWaveform = waveform.map(() => {
-      if (!isRecording) return 0;
-      return Math.random() * 30 + 10;
-    });
-    setWaveform(newWaveform);
-    animationRef.current = requestAnimationFrame(animateWaveform);
-  };
+// squeezes all the level samples into a fixed number of bars for the player
+const downsample = (samples, count) => {
+  if (samples.length === 0) return [];
+  const size = samples.length / count;
+  const bars = Array.from({ length: count }, (_, i) => {
+    const start = Math.floor(i * size);
+    const slice = samples.slice(start, Math.max(start + 1, Math.floor((i + 1) * size)));
+    return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : 0;
+  });
+  const peak = Math.max(...bars, 0.01);
+  return bars.map((v) => Number((v / peak).toFixed(2)));
+};
+
+// starts recording as soon as it mounts (the mic button click is the user
+// gesture browsers want). cancel throws it away, send hands the blob up
+const VoiceRecorder = ({ onSend, onCancel }) => {
+  const [elapsed, setElapsed] = useState(0);
+  const [levels, setLevels] = useState(() => Array(LIVE_BARS).fill(0.08));
+  const [ready, setReady] = useState(false);
+
+  const recorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const samplesRef = useRef([]);
+  const startedAtRef = useRef(0);
+  const finishRef = useRef(null);
+  // the parent re-renders while we record, keep its latest callbacks without restarting
+  const callbacksRef = useRef({ onSend, onCancel });
+  callbacksRef.current = { onSend, onCancel };
 
   useEffect(() => {
-    if (isRecording) {
-      animateWaveform();
-    } else {
-      cancelAnimationFrame(animationRef.current);
-      setWaveform(Array(30).fill(0));
-    }
-    return () => cancelAnimationFrame(animationRef.current);
-  }, [isRecording]);
+    let cancelled = false;
+    let stream = null;
+    let audioContext = null;
+    let frame = null;
+    let timer = null;
+    let lastSample = 0;
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      mediaRecorder.current = new MediaRecorder(stream);
-      audioChunks.current = [];
+    const stopEverything = () => {
+      cancelAnimationFrame(frame);
+      clearInterval(timer);
+      stream?.getTracks().forEach((track) => track.stop());
+      audioContext?.close().catch(() => {});
+    };
 
-      mediaRecorder.current.ondataavailable = (event) => {
-        audioChunks.current.push(event.data);
-      };
-
-      mediaRecorder.current.onstop = () => {
-        const audioBlob = new Blob(audioChunks.current, { type: "audio/webm" });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        setAudioBlob(audioBlob);
-        setAudioUrl(audioUrl);
-        setShowPreview(true);
-
-        const audio = new Audio(audioUrl);
-        audio.onloadedmetadata = () => {
-          audioBlob.duration = audio.duration;
-        };
-      };
-
-      mediaRecorder.current.start();
-      setIsRecording(true);
-      setIsHolding(true);
-
-      timerRef.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
-      }, 1000);
-    } catch (error) {
-      console.error("Error accessing microphone:", error);
-      alert("Please allow microphone access to record voice messages");
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorder.current && isRecording) {
-      mediaRecorder.current.stop();
-      setIsRecording(false);
-      setIsHolding(false);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
+    const start = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        toast.error("Microphone access is needed to record voice messages.");
+        callbacksRef.current.onCancel();
+        return;
       }
-    }
-  };
+      if (cancelled) {
+        stopEverything();
+        return;
+      }
 
-  const handleMouseDown = () => {
-    if (showPreview) return;
-    holdTimeoutRef.current = setTimeout(() => {
-      startRecording();
-    }, 200);
-  };
+      const mimeType = pickMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recorderRef.current = recorder;
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
+      recorder.start(250);
+      startedAtRef.current = Date.now();
+      setReady(true);
 
-  const handleMouseUp = () => {
-    clearTimeout(holdTimeoutRef.current);
-    if (isRecording && !showPreview) {
-      stopRecording();
-    } else if (!showPreview && !isRecording) {
-      onCancel();
-    }
-  };
+      // live level meter, sampled about 12 times a second
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        audioContext = new AudioCtx();
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        audioContext.createMediaStreamSource(stream).connect(analyser);
+        const data = new Uint8Array(analyser.fftSize);
 
-  const handleTouchStart = (e) => {
-    e.preventDefault();
-    if (showPreview) return;
-    holdTimeoutRef.current = setTimeout(() => {
-      startRecording();
-    }, 200);
-  };
+        const tick = (now) => {
+          if (now - lastSample > 80) {
+            lastSample = now;
+            analyser.getByteTimeDomainData(data);
+            let sum = 0;
+            for (const value of data) sum += ((value - 128) / 128) ** 2;
+            const level = Math.min(1, Math.sqrt(sum / data.length) * 4);
+            samplesRef.current.push(level);
+            setLevels((prev) => [...prev.slice(1), Math.max(0.08, level)]);
+          }
+          frame = requestAnimationFrame(tick);
+        };
+        frame = requestAnimationFrame(tick);
+      }
 
-  const handleTouchEnd = () => {
-    clearTimeout(holdTimeoutRef.current);
-    if (isRecording && !showPreview) {
-      stopRecording();
-    } else if (!showPreview && !isRecording) {
-      onCancel();
-    }
-  };
+      timer = setInterval(() => {
+        const seconds = (Date.now() - startedAtRef.current) / 1000;
+        setElapsed(seconds);
+        if (seconds >= MAX_VOICE_SECONDS) finishRef.current?.(true);
+      }, 200);
+    };
 
-  const sendVoiceMessage = async () => {
-    if (audioBlob) {
-      await onSendVoice(audioBlob, audioBlob.duration || recordingTime);
-      cancelRecording();
-    }
-  };
+    start();
 
-  const cancelRecording = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-    }
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
-    setAudioBlob(null);
-    setAudioUrl(null);
-    setShowPreview(false);
-    setIsRecording(false);
-    onCancel();
-  };
+    // stop() resolves once the last chunk is flushed
+    finishRef.current = (send) => {
+      const recorder = recorderRef.current;
+      finishRef.current = null;
+      if (!recorder || recorder.state === "inactive") {
+        stopEverything();
+        if (!send) callbacksRef.current.onCancel();
+        return;
+      }
+      recorder.onstop = () => {
+        stopEverything();
+        if (!send) return callbacksRef.current.onCancel();
+        const duration = (Date.now() - startedAtRef.current) / 1000;
+        const type = recorder.mimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type });
+        callbacksRef.current.onSend(
+          blob,
+          duration,
+          downsample(samplesRef.current, SAVED_BARS),
+          type
+        );
+      };
+      recorder.stop();
+    };
 
-  const formatTime = (seconds) => {
-    if (isNaN(seconds)) return "0:00";
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
+    return () => {
+      cancelled = true;
+      const recorder = recorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.onstop = null;
+        recorder.stop();
+      }
+      stopEverything();
+    };
+  }, []);
+
+  const tooShort = elapsed < 0.7;
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
-      <AnimatePresence mode="wait">
-        {!showPreview ? (
-          <motion.div
-            key="recording"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="p-4"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {isRecording && (
-                  <>
-                    <div className="flex items-center gap-1">
-                      <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                      <span className="text-sm text-gray-600">
-                        {formatTime(recordingTime)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-[2px] h-10">
-                      {waveform.map((height, i) => (
-                        <div
-                          key={i}
-                          className="w-1 bg-indigo-500 rounded-full transition-all duration-75"
-                          style={{ height: `${height}px` }}
-                        />
-                      ))}
-                    </div>
-                  </>
-                )}
-                {!isRecording && (
-                  <span className="text-sm text-gray-400">
-                    Hold to record • Release to send
-                  </span>
-                )}
-              </div>
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => finishRef.current?.(false)}
+        className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-red-50 hover:text-red-500"
+        aria-label="Discard recording"
+      >
+        <FiTrash2 className="text-lg" />
+      </button>
 
-              <button
-                onMouseDown={handleMouseDown}
-                onMouseUp={handleMouseUp}
-                onTouchStart={handleTouchStart}
-                onTouchEnd={handleTouchEnd}
-                className={`w-14 h-14 rounded-full transition-all transform active:scale-95 ${
-                  isRecording
-                    ? "bg-red-500 shadow-lg scale-110"
-                    : "bg-indigo-500 hover:bg-indigo-600 shadow-md"
-                }`}
-              >
-                <FiMic className="w-6 h-6 text-white mx-auto" />
-              </button>
-            </div>
-          </motion.div>
-        ) : (
-          <motion.div
-            key="preview"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="p-4"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3 flex-1">
-                <button
-                  onClick={cancelRecording}
-                  className="w-10 h-10 rounded-full bg-gray-100 text-red-500 hover:bg-red-50 transition-colors flex items-center justify-center"
-                >
-                  <FiTrash2 />
-                </button>
+      <div className="flex h-11 min-w-0 flex-1 items-center gap-3 rounded-full bg-gray-100 px-4">
+        <span className="flex items-center gap-2 text-sm font-medium tabular-nums text-gray-700">
+          <span
+            className={`h-2.5 w-2.5 rounded-full bg-red-500 ${ready ? "animate-pulse" : "opacity-40"}`}
+          />
+          {formatDuration(elapsed)}
+        </span>
+        <div className="flex h-6 flex-1 items-center justify-end gap-[2px] overflow-hidden">
+          {levels.map((level, i) => (
+            <span
+              key={i}
+              className="w-[3px] flex-shrink-0 rounded-full bg-indigo-400 transition-[height] duration-75"
+              style={{ height: `${level * 100}%` }}
+            />
+          ))}
+        </div>
+      </div>
 
-                <div className="flex-1 bg-gray-100 rounded-full px-4 py-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">
-                      Voice message •{" "}
-                      {formatTime(audioBlob?.duration || recordingTime)}
-                    </span>
-                    <audio ref={audioRef} src={audioUrl} className="hidden" />
-                  </div>
-                  <div className="h-1 bg-gray-200 rounded-full mt-1 overflow-hidden">
-                    <div
-                      className="h-full bg-indigo-500 transition-all"
-                      style={{ width: `0%` }}
-                    />
-                  </div>
-                </div>
-
-                <button
-                  onClick={sendVoiceMessage}
-                  className="w-10 h-10 rounded-full bg-green-500 text-white hover:bg-green-600 transition-colors flex items-center justify-center"
-                >
-                  <FiSend />
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <button
+        type="button"
+        onClick={() => finishRef.current?.(true)}
+        disabled={!ready || tooShort}
+        className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-50"
+        aria-label="Send voice message"
+      >
+        <FiSend className="text-lg" />
+      </button>
     </div>
   );
 };

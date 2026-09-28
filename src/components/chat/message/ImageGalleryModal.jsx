@@ -1,90 +1,104 @@
-import React, { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { FiX, FiChevronLeft, FiChevronRight } from "react-icons/fi";
+import { motion } from "framer-motion";
+import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { FiChevronLeft, FiChevronRight, FiDownload, FiX } from "react-icons/fi";
 
-const ImageGalleryModal = ({ images, initialIndex, onClose }) => {
-  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+const ImageGalleryModal = ({ images, initialIndex = 0, onClose }) => {
+  const [index, setIndex] = useState(initialIndex);
   const [loaded, setLoaded] = useState(false);
+  const count = images.length;
+
+  const go = useCallback(
+    (step) => {
+      setLoaded(false);
+      setIndex((current) => (current + step + count) % count);
+    },
+    [count]
+  );
 
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === "ArrowLeft") handlePrev();
-      if (e.key === "ArrowRight") handleNext();
+    const onKeyDown = (e) => {
+      if (e.key === "ArrowLeft") go(-1);
+      if (e.key === "ArrowRight") go(1);
       if (e.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [currentIndex]);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [go, onClose]);
 
-  const handlePrev = () => {
-    setCurrentIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1));
-    setLoaded(false);
-  };
+  const current = images[index];
 
-  const handleNext = () => {
-    setCurrentIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
-    setLoaded(false);
-  };
-
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/95 z-[100] flex items-center justify-center"
       onClick={onClose}
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/90"
     >
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 w-10 h-10 bg-white/10 rounded-full flex items-center justify-center text-white hover:bg-white/20 transition-colors z-10"
-      >
-        <FiX className="text-2xl" />
-      </button>
+      <div className="absolute right-4 top-4 z-10 flex gap-2">
+        <a
+          href={current.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+          aria-label="Open original"
+        >
+          <FiDownload />
+        </a>
+        <button
+          onClick={onClose}
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+          aria-label="Close"
+        >
+          <FiX className="text-xl" />
+        </button>
+      </div>
 
-      {images.length > 1 && (
+      {count > 1 && (
         <>
           <button
             onClick={(e) => {
               e.stopPropagation();
-              handlePrev();
+              go(-1);
             }}
-            className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center text-white hover:bg-white/20 transition-colors z-10"
+            className="absolute left-4 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+            aria-label="Previous"
           >
-            <FiChevronLeft className="text-3xl" />
+            <FiChevronLeft className="text-2xl" />
           </button>
           <button
             onClick={(e) => {
               e.stopPropagation();
-              handleNext();
+              go(1);
             }}
-            className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center text-white hover:bg-white/20 transition-colors z-10"
+            className="absolute right-4 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+            aria-label="Next"
           >
-            <FiChevronRight className="text-3xl" />
+            <FiChevronRight className="text-2xl" />
           </button>
+          <span className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-3 py-1 text-sm text-white">
+            {index + 1} / {count}
+          </span>
         </>
       )}
 
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-sm bg-black/50 px-3 py-1 rounded-full">
-        {currentIndex + 1} / {images.length}
-      </div>
-
-      <div
-        className="w-full h-full flex items-center justify-center p-4"
+      {!loaded && (
+        <span className="absolute h-10 w-10 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+      )}
+      <img
+        key={current.url}
+        src={current.url}
+        alt=""
         onClick={(e) => e.stopPropagation()}
-      >
-        {!loaded && (
-          <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin" />
-        )}
-        <img
-          src={images[currentIndex].url}
-          alt="Gallery"
-          className={`max-w-full max-h-full object-contain transition-opacity duration-300 ${
-            loaded ? "opacity-100" : "opacity-0"
-          }`}
-          onLoad={() => setLoaded(true)}
-        />
-      </div>
-    </motion.div>
+        onLoad={() => setLoaded(true)}
+        className={`max-h-[88vh] max-w-[92vw] object-contain transition-opacity ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </motion.div>,
+    document.body
   );
 };
 
