@@ -58,8 +58,8 @@ const IncomingCallModal = ({ call, onAccept, onReject, onDismiss }) => {
             className="relative h-24 w-24 rounded-full object-cover ring-4 ring-white"
           />
         </div>
-        <h3 className="text-xl font-semibold text-gray-900">{call.callerName || "Someone"}</h3>
-        <p className="mt-1 flex items-center justify-center gap-1.5 text-sm text-gray-500">
+        <h3 className="relative text-xl font-semibold text-gray-900">{call.callerName || "Someone"}</h3>
+        <p className="relative mt-1 flex items-center justify-center gap-1.5 text-sm text-gray-500">
           <Icon /> Incoming {call.isVideo ? "video" : "voice"} call
         </p>
 

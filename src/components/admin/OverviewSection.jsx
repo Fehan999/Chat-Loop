@@ -153,7 +153,7 @@ const OverviewSection = ({ users, reports, counts, canEdit, onOpen }) => {
           label="Suspended"
           value={stats.suspended}
           tone="red"
-          hint={`${stats.resolved} reports resolved`}
+          hint={`${stats.resolved} report${stats.resolved === 1 ? "" : "s"} resolved`}
         />
       </div>
 
