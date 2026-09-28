@@ -1,8 +1,8 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, GithubAuthProvider } from "firebase/auth";
+import { getAuth, GithubAuthProvider, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
 
+// these values are public by design, access is controlled by firestore.rules
 const firebaseConfig = {
   apiKey: "AIzaSyAO523a-PuVBzYDOY_MuTYhWr-Jycuwwcc",
   authDomain: "chatloop-13918.firebaseapp.com",
@@ -13,19 +13,14 @@ const firebaseConfig = {
   measurementId: "G-HE4S77CZTG",
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize services
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app);
 
-// Initialize providers
 export const googleProvider = new GoogleAuthProvider();
 export const githubProvider = new GithubAuthProvider();
 
-// Optional: Add scopes if needed
 googleProvider.addScope("profile");
 googleProvider.addScope("email");
 githubProvider.addScope("user:email");

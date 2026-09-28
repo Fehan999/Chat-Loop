@@ -1,11 +1,7 @@
-// Generate a unique 4-digit ID
-export const generateUniqueId = () => {
-  return Math.floor(1000 + Math.random() * 9000).toString();
-};
-
-// Generate with timestamp to ensure uniqueness
+// the 4 digit public id people can search for in "Add friend".
+// it isn't guaranteed unique, the uid is what actually identifies a user
 export const generateUniqueIdWithTimestamp = () => {
-  const timestamp = Date.now().toString().slice(-4);
-  const random = Math.floor(100 + Math.random() * 900).toString();
-  return (parseInt(timestamp) + parseInt(random)).toString().slice(-4);
+  const timestamp = Date.now() % 10000;
+  const random = Math.floor(Math.random() * 10000);
+  return ((timestamp + random) % 10000).toString().padStart(4, "0");
 };

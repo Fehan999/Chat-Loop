@@ -1,54 +1,26 @@
-export const formatLastSeen = (lastSeen) => {
-  if (!lastSeen) return "Offline";
+import { formatRelativeTime, toDate } from "./dateUtils";
 
-  const now = new Date();
-  const diffMs = now - lastSeen;
-  const diffSeconds = Math.floor(diffMs / 1000);
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  const diffHours = Math.floor(diffMinutes / 60);
-  const diffDays = Math.floor(diffHours / 24);
-  const diffWeeks = Math.floor(diffDays / 7);
-  const diffMonths = Math.floor(diffDays / 30);
-  const diffYears = Math.floor(diffDays / 365);
+// if a tab gets killed without the "offline" write going through, the heartbeat
+// stops. after this long we stop trusting the stored status
+const STALE_AFTER_MS = 5 * 60 * 1000;
 
-  if (diffSeconds < 60) {
-    return "Just now";
+// turns a raw user doc into what other people are allowed to see
+export const resolvePresence = (profile) => {
+  if (!profile || profile.showActiveStatus === false) {
+    return { status: "offline", lastSeen: null };
   }
 
-  if (diffMinutes < 60) {
-    return `${diffMinutes} minute${diffMinutes !== 1 ? "s" : ""} ago`;
-  }
+  const lastSeen = toDate(profile.lastSeen);
+  let status = profile.status || "offline";
+  const isStale = lastSeen && Date.now() - lastSeen.getTime() > STALE_AFTER_MS;
+  if (status !== "offline" && isStale) status = "offline";
 
-  if (diffHours < 24) {
-    return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
-  }
-
-  if (diffDays < 7) {
-    return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
-  }
-
-  if (diffWeeks < 4) {
-    return `${diffWeeks} week${diffWeeks !== 1 ? "s" : ""} ago`;
-  }
-
-  if (diffMonths < 12) {
-    return `${diffMonths} month${diffMonths !== 1 ? "s" : ""} ago`;
-  }
-
-  return `${diffYears} year${diffYears !== 1 ? "s" : ""} ago`;
+  return { status, lastSeen };
 };
 
-export const getStatusColor = (status) => {
-  switch (status) {
-    case "online":
-      return "bg-green-500";
-    case "away":
-      return "bg-yellow-500";
-    case "offline":
-      return "bg-gray-400";
-    default:
-      return "bg-gray-400";
-  }
+export const formatLastSeen = (lastSeen) => {
+  if (!lastSeen) return "a while ago";
+  return formatRelativeTime(lastSeen);
 };
 
 export const getStatusText = (status, lastSeen) => {
@@ -59,19 +31,17 @@ export const getStatusText = (status, lastSeen) => {
 };
 
 export const getExactTime = (lastSeen) => {
-  if (!lastSeen) return "Never";
-  return lastSeen.toLocaleString();
+  const date = toDate(lastSeen);
+  return date ? date.toLocaleString() : "Never";
 };
 
 export const getStatusDotClass = (status) => {
   switch (status) {
     case "online":
-      return "bg-green-500 animate-pulse";
+      return "bg-emerald-500";
     case "away":
-      return "bg-yellow-500";
-    case "offline":
-      return "bg-gray-400";
+      return "bg-amber-400";
     default:
-      return "bg-gray-400";
+      return "bg-gray-300";
   }
 };

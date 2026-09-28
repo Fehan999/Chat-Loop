@@ -1,11 +1,12 @@
 import {
-  addDoc,
-  arrayUnion,
   collection,
   doc,
   getDoc,
   getDocs,
+  increment,
+  limitToLast,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -13,10 +14,12 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { db, storage } from "./config";
+import { MESSAGE_PAGE_SIZE } from "../constants";
+import { toDate } from "../utils/dateUtils";
+import { generateUniqueIdWithTimestamp } from "../utils/generateUserId";
+import { db } from "./config";
 
-// ==================== USER FUNCTIONS ====================
+// users
 
 export const usersCollection = collection(db, "users");
 export const getUserDoc = (userId) => doc(db, "users", userId);
@@ -24,70 +27,74 @@ export const getUserDoc = (userId) => doc(db, "users", userId);
 export const getUserData = async (userId) => {
   if (!userId) return null;
   try {
-    const userDoc = await getDoc(getUserDoc(userId));
-    if (userDoc.exists()) {
-      return { id: userDoc.id, ...userDoc.data() };
-    }
-    return null;
+    const snap = await getDoc(getUserDoc(userId));
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
   } catch (error) {
     console.error("Error fetching user data:", error);
     return null;
   }
 };
 
-export const updateUserStatus = async (userId, status) => {
-  try {
-    const userRef = getUserDoc(userId);
-    const userDoc = await getDoc(userRef);
-
-    if (userDoc.exists()) {
-      await updateDoc(userRef, {
-        status,
-        lastSeen: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      // Create document if it doesn't exist
-      await setDoc(userRef, {
-        status,
-        lastSeen: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        uid: userId,
-        createdAt: serverTimestamp(),
-      });
+// live copy of one user doc. used for the signed in user and every friend
+export const listenToUser = (userId, callback) =>
+  onSnapshot(
+    getUserDoc(userId),
+    (snap) => callback(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+    (error) => {
+      console.error("User listener failed:", error);
+      callback(null);
     }
-    console.log(
-      `[Status] ${userId} → ${status} at ${new Date().toLocaleTimeString()}`
+  );
+
+// merge write so it never wipes profile fields, and no read beforehand
+export const updateUserStatus = async (userId, status) => {
+  if (!userId) return;
+  try {
+    await setDoc(
+      getUserDoc(userId),
+      { uid: userId, status, lastSeen: serverTimestamp() },
+      { merge: true }
     );
   } catch (error) {
     console.error("Error updating user status:", error);
   }
 };
 
-//  listener for timestamp handling
-export const listenToUserStatus = (userId, callback) => {
-  const userRef = getUserDoc(userId);
-  return onSnapshot(userRef, (doc) => {
-    if (doc.exists()) {
-      const data = doc.data();
-      let lastSeen = data.lastSeen;
-
-      // Convert Firestore timestamp to Date if needed
-      if (lastSeen && lastSeen.toDate) {
-        lastSeen = lastSeen.toDate();
-      }
-
-      callback(data.status || "offline", lastSeen);
-    } else {
-      callback("offline", null);
-    }
-  });
+// shape of a brand new user doc, shared by email and social sign up.
+// merge because the presence write may have created the doc a moment earlier
+export const createUserProfile = async ({
+  uid,
+  name,
+  email,
+  phone = "",
+  bio = "",
+  avatar = "",
+}) => {
+  const uniqueId = generateUniqueIdWithTimestamp();
+  const profile = {
+    uid,
+    name,
+    email,
+    phone,
+    bio,
+    avatar,
+    uniqueId,
+    username: `@${name.replace(/\s+/g, "").toLowerCase()}_${uniqueId}`,
+    location: "",
+    friends: [],
+    status: "online",
+    showActiveStatus: true,
+    lastSeen: serverTimestamp(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  await setDoc(getUserDoc(uid), profile, { merge: true });
+  return profile;
 };
 
 export const updateUserProfile = async (userId, data) => {
   try {
-    const userRef = getUserDoc(userId);
-    await updateDoc(userRef, {
+    await updateDoc(getUserDoc(userId), {
       ...data,
       updatedAt: serverTimestamp(),
     });
@@ -98,106 +105,21 @@ export const updateUserProfile = async (userId, data) => {
   }
 };
 
-// ==================== FRIEND FUNCTIONS ====================
-
-export const sendFriendRequest = async (fromUserId, toUserId) => {
-  try {
-    // Check if request already exists
-    const existingRequest = query(
-      collection(db, "friendRequests"),
-      where("senderId", "==", fromUserId),
-      where("receiverId", "==", toUserId)
-    );
-    const existingSnapshot = await getDocs(existingRequest);
-
-    const friendRequest = {
-      senderId: fromUserId,
-      receiverId: toUserId,
-      status: "pending",
-      createdAt: serverTimestamp(),
-    };
-
-    await addDoc(collection(db, "friendRequests"), friendRequest);
-    return true;
-  } catch (error) {
-    console.error("Error sending friend request:", error);
-    return false;
-  }
-};
-
-export const acceptFriendRequest = async (
-  requestId,
-  currentUserId,
-  requesterId
-) => {
-  try {
-    const requestRef = doc(db, "friendRequests", requestId);
-    await updateDoc(requestRef, {
-      status: "accepted",
-      updatedAt: serverTimestamp(),
-    });
-    return true;
-  } catch (error) {
-    console.error("Error accepting friend request:", error);
-    return false;
-  }
-};
-
-export const rejectFriendRequest = async (requestId) => {
-  try {
-    const requestRef = doc(db, "friendRequests", requestId);
-    await updateDoc(requestRef, {
-      status: "rejected",
-      updatedAt: serverTimestamp(),
-    });
-    return true;
-  } catch (error) {
-    console.error("Error rejecting friend request:", error);
-    return false;
-  }
-};
-
-export const getFriendRequests = (userId, callback) => {
-  const q = query(
-    collection(db, "friendRequests"),
-    where("receiverId", "==", userId),
-    where("status", "==", "pending")
-  );
-
-  return onSnapshot(q, async (snapshot) => {
-    const requests = [];
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      const requesterData = await getUserData(data.senderId);
-      requests.push({
-        id: doc.id,
-        ...data,
-        requester: requesterData,
-      });
-    }
-    callback(requests);
-  });
-};
-
-// ==================== CHAT FUNCTIONS ====================
+// chats
 
 export const chatsCollection = collection(db, "chats");
 export const getChatDoc = (chatId) => doc(db, "chats", chatId);
 
+// one chat per pair of users, the id is just both uids sorted
+export const chatIdFor = (userId1, userId2) => [userId1, userId2].sort().join("_");
+
 export const getOrCreateChat = async (userId1, userId2) => {
   try {
-    // Create a unique chat ID by sorting user IDs (without any prefix)
-    const chatId = [userId1, userId2].sort().join("_");
+    const chatId = chatIdFor(userId1, userId2);
+    const chatRef = getChatDoc(chatId);
+    const snap = await getDoc(chatRef);
+    if (snap.exists()) return { id: chatId, ...snap.data() };
 
-    // Check if chat already exists
-    const chatRef = doc(db, "chats", chatId);
-    const chatDoc = await getDoc(chatRef);
-
-    if (chatDoc.exists()) {
-      return { id: chatDoc.id, ...chatDoc.data() };
-    }
-
-    // Create new chat with deterministic ID
     const newChat = {
       participants: [userId1, userId2],
       createdAt: serverTimestamp(),
@@ -205,8 +127,8 @@ export const getOrCreateChat = async (userId1, userId2) => {
       lastMessageTime: serverTimestamp(),
       lastMessageSender: "",
       type: "private",
+      unreadCounts: { [userId1]: 0, [userId2]: 0 },
     };
-
     await setDoc(chatRef, newChat);
     return { id: chatId, ...newChat };
   } catch (error) {
@@ -215,71 +137,68 @@ export const getOrCreateChat = async (userId1, userId2) => {
   }
 };
 
-// Fixed: Get user chats with deterministic IDs
-export const getUserChats = (userId, callback) => {
-  const q = query(
-    chatsCollection,
-    where("participants", "array-contains", userId)
-  );
+// profiles are not joined in here on purpose, the dashboard keeps its own live
+// listeners for them so a status change doesn't refetch every chat
+export const listenToChats = (userId, callback) => {
+  const q = query(chatsCollection, where("participants", "array-contains", userId));
 
-  return onSnapshot(q, async (snapshot) => {
-    const chats = [];
-    for (const doc of snapshot.docs) {
-      const chatData = doc.data();
-      const otherParticipantId = chatData.participants?.find(
-        (id) => id !== userId
-      );
-      if (otherParticipantId) {
-        const otherUser = await getUserData(otherParticipantId);
-        if (otherUser) {
-          chats.push({
-            id: doc.id,
-            ...chatData,
-            otherUser,
-          });
-        }
-      }
-    }
-    // Sort manually after fetching
-    chats.sort((a, b) => {
-      const timeA = a.lastMessageTime?.toDate?.() || new Date(0);
-      const timeB = b.lastMessageTime?.toDate?.() || new Date(0);
-      return timeB - timeA;
-    });
-    callback(chats);
-  });
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const chats = snapshot.docs.map((d) => {
+        const data = d.data({ serverTimestamps: "estimate" });
+        return {
+          id: d.id,
+          ...data,
+          otherUserId: data.participants?.find((id) => id !== userId) || null,
+          lastMessageTime: toDate(data.lastMessageTime),
+        };
+      });
+      callback(chats);
+    },
+    (error) => console.error("Chats listener failed:", error)
+  );
 };
 
-// ==================== MESSAGE FUNCTIONS ====================
+// messages
 
-export const sendMessage = async (chatId, messageData) => {
+const messagesRef = (chatId) => collection(db, "messages", chatId, "messages");
+
+// short text for the sidebar when a message is only media
+export const previewFor = (text, attachments = []) => {
+  if (text?.trim()) return text.trim();
+  const first = attachments?.[0];
+  if (!first) return "";
+  if (first.isVoice || first.type?.startsWith("audio/")) return "🎤 Voice message";
+  if (first.type?.startsWith("image/")) {
+    return attachments.length > 1 ? `📷 ${attachments.length} photos` : "📷 Photo";
+  }
+  return `📎 ${first.name || "File"}`;
+};
+
+// message + chat summary go out in one batch, so the sidebar can't drift
+// from what's actually in the conversation
+export const sendMessage = async (chatId, messageData, recipientId) => {
   try {
-    // First, verify the chat document exists
-    const chatRef = doc(db, "chats", chatId);
-    const chatDoc = await getDoc(chatRef);
+    const batch = writeBatch(db);
+    const messageRef = doc(messagesRef(chatId));
 
-    if (!chatDoc.exists()) {
-      console.error("Chat document does not exist:", chatId);
-      return false;
-    }
-
-    const messagesRef = collection(db, "messages", chatId, "messages");
-
-    const message = {
+    batch.set(messageRef, {
       ...messageData,
       timestamp: serverTimestamp(),
       read: false,
       createdAt: new Date().toISOString(),
-    };
-
-    await addDoc(messagesRef, message);
-
-    await updateDoc(chatRef, {
-      lastMessage: messageData.text,
-      lastMessageTime: serverTimestamp(),
-      lastMessageSender: messageData.senderId,
     });
 
+    const chatUpdate = {
+      lastMessage: previewFor(messageData.text, messageData.attachments),
+      lastMessageTime: serverTimestamp(),
+      lastMessageSender: messageData.senderId,
+    };
+    if (recipientId) chatUpdate[`unreadCounts.${recipientId}`] = increment(1);
+    batch.update(getChatDoc(chatId), chatUpdate);
+
+    await batch.commit();
     return true;
   } catch (error) {
     console.error("Error sending message:", error);
@@ -287,209 +206,52 @@ export const sendMessage = async (chatId, messageData) => {
   }
 };
 
-export const listenToMessages = (chatId, callback) => {
-  const messagesRef = collection(db, "messages", chatId, "messages");
-  const q = query(messagesRef);
+// only the latest page is kept live, older ones come in when the user scrolls up
+export const listenToMessages = (chatId, callback, pageSize = MESSAGE_PAGE_SIZE) => {
+  const q = query(messagesRef(chatId), orderBy("timestamp", "asc"), limitToLast(pageSize));
 
-  return onSnapshot(q, (snapshot) => {
-    const messages = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-
-      // Properly handle Firestore Timestamp
-      let timestamp = data.timestamp;
-      let formattedTime = "Just now";
-
-      if (timestamp) {
-        if (timestamp.toDate) {
-          const date = timestamp.toDate();
-          formattedTime = date.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: true,
-          });
-          timestamp = date;
-        } else if (timestamp instanceof Date) {
-          formattedTime = timestamp.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: true,
-          });
-        }
-      }
-
-      messages.push({
-        id: doc.id,
-        ...data,
-        timestamp: timestamp,
-        formattedTime: formattedTime,
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const messages = snapshot.docs.map((d) => {
+        const data = d.data({ serverTimestamps: "estimate" });
+        return {
+          id: d.id,
+          ...data,
+          timestamp: toDate(data.timestamp),
+          pending: d.metadata.hasPendingWrites,
+        };
       });
-    });
-
-    messages.sort((a, b) => {
-      const timeA = a.timestamp?.getTime?.() || 0;
-      const timeB = b.timestamp?.getTime?.() || 0;
-      return timeA - timeB;
-    });
-
-    callback(messages);
-  });
+      callback(messages);
+    },
+    (error) => console.error("Messages listener failed:", error)
+  );
 };
 
-export const markMessagesAsRead = async (chatId, userId) => {
+// flips read receipts on the messages we have in memory and resets our badge
+export const markMessagesAsRead = async (chatId, userId, messages = []) => {
   try {
-    const messagesRef = collection(db, "messages", chatId, "messages");
-    const q = query(messagesRef, where("read", "==", false));
-    const querySnapshot = await getDocs(q);
+    const unread = messages
+      .filter((m) => !m.read && m.senderId !== userId && !m.pending)
+      .slice(0, 450);
 
     const batch = writeBatch(db);
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      if (data.senderId !== userId) {
-        batch.update(doc.ref, { read: true });
-      }
-    });
-
+    unread.forEach((m) => batch.update(doc(messagesRef(chatId), m.id), { read: true }));
+    batch.update(getChatDoc(chatId), { [`unreadCounts.${userId}`]: 0 });
     await batch.commit();
   } catch (error) {
     console.error("Error marking messages as read:", error);
   }
 };
 
-export const uploadFile = async (file, userId, chatId) => {
-  try {
-    const timestamp = Date.now();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const fileName = `${timestamp}_${safeFileName}`;
-    const filePath = `chats/${chatId}/${fileName}`;
+// typing indicator
 
-    const storageRef = ref(storage, filePath);
-
-    const metadata = {
-      contentType: file.type,
-      customMetadata: {
-        uploadedBy: userId,
-        uploadedAt: new Date().toISOString(),
-      },
-    };
-
-    const snapshot = await uploadBytes(storageRef, file, metadata);
-
-    const url = await getDownloadURL(snapshot.ref);
-
-    console.log("Upload successful, URL:", url);
-
-    return {
-      name: file.name,
-      url, // This URL already has a token and will work
-      type: file.type,
-      size: file.size,
-    };
-  } catch (error) {
-    console.error("Upload error:", error);
-    return null;
-  }
-};
-
-export const getUserFriends = async (userId) => {
-  try {
-    const q = query(
-      collection(db, "friendRequests"),
-      where("status", "==", "accepted"),
-      where("senderId", "==", userId)
-    );
-
-    const q2 = query(
-      collection(db, "friendRequests"),
-      where("status", "==", "accepted"),
-      where("receiverId", "==", userId)
-    );
-
-    const [sentSnapshot, receivedSnapshot] = await Promise.all([
-      getDocs(q),
-      getDocs(q2),
-    ]);
-
-    const friendIds = [];
-
-    sentSnapshot.forEach((doc) => {
-      const data = doc.data();
-      friendIds.push(data.receiverId);
-    });
-
-    receivedSnapshot.forEach((doc) => {
-      const data = doc.data();
-      friendIds.push(data.senderId);
-    });
-
-    const friends = [];
-    for (const friendId of friendIds) {
-      const friendData = await getUserData(friendId);
-      if (friendData) {
-        friends.push(friendData);
-      }
-    }
-
-    return friends;
-  } catch (error) {
-    console.error("Error getting user friends:", error);
-    return [];
-  }
-};
-
-export const listenToUserFriends = (userId, callback) => {
-  const q = query(
-    collection(db, "friendRequests"),
-    where("status", "==", "accepted"),
-    where("senderId", "==", userId)
-  );
-
-  const q2 = query(
-    collection(db, "friendRequests"),
-    where("status", "==", "accepted"),
-    where("receiverId", "==", userId)
-  );
-
-  const unsub1 = onSnapshot(q, async () => {
-    const friends = await getUserFriends(userId);
-    callback(friends);
-  });
-
-  const unsub2 = onSnapshot(q2, async () => {
-    const friends = await getUserFriends(userId);
-    callback(friends);
-  });
-
-  return () => {
-    unsub1();
-    unsub2();
-  };
-};
-
-export const initializeChatsForFriends = async (userId, friendsList) => {
-  try {
-    const friends = friendsList || (await getUserFriends(userId));
-
-    for (const friend of friends) {
-      const chat = await getOrCreateChat(userId, friend.id);
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error initializing chats:", error);
-    return false;
-  }
-};
-// Typing Indicator
 export const updateTypingStatus = async (chatId, userId, isTyping) => {
+  if (!chatId || !userId) return;
   try {
-    const typingRef = doc(db, "typing", chatId);
     await setDoc(
-      typingRef,
-      {
-        [userId]: isTyping,
-        updatedAt: serverTimestamp(),
-      },
+      doc(db, "typing", chatId),
+      { [userId]: isTyping, updatedAt: serverTimestamp() },
       { merge: true }
     );
   } catch (error) {
@@ -497,99 +259,43 @@ export const updateTypingStatus = async (chatId, userId, isTyping) => {
   }
 };
 
-export const listenToTypingStatus = (chatId, callback) => {
-  const typingRef = doc(db, "typing", chatId);
-  return onSnapshot(typingRef, (doc) => {
-    if (doc.exists()) {
-      callback(doc.data());
-    } else {
-      callback({});
-    }
-  });
-};
+export const listenToTypingStatus = (chatId, callback) =>
+  onSnapshot(
+    doc(db, "typing", chatId),
+    (snap) => callback(snap.exists() ? snap.data() : {}),
+    () => callback({})
+  );
 
-// Delete conversation
+// wipes the messages for both people. batches are capped at 500 writes
+// so big conversations get deleted in chunks
 export const deleteConversation = async (chatId, userId) => {
   try {
-    // Delete all messages in the chat
-    const messagesRef = collection(db, "messages", chatId, "messages");
-    const messagesSnapshot = await getDocs(messagesRef);
+    const snapshot = await getDocs(messagesRef(chatId));
+    const docs = snapshot.docs;
 
-    const batch = writeBatch(db);
-    messagesSnapshot.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
+    for (let i = 0; i < docs.length; i += 450) {
+      const batch = writeBatch(db);
+      docs.slice(i, i + 450).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
 
-    // Update chat last message
-    const chatRef = getChatDoc(chatId);
-    batch.update(chatRef, {
-      lastMessage: "Conversation deleted",
+    await updateDoc(getChatDoc(chatId), {
+      lastMessage: "",
       lastMessageTime: serverTimestamp(),
       lastMessageSender: userId,
-      deletedBy: arrayUnion(userId),
+      unreadCounts: {},
     });
-
-    await batch.commit();
     return true;
   } catch (error) {
     console.error("Error deleting conversation:", error);
     return false;
   }
 };
-// Update unread count for a chat
-export const updateUnreadCount = async (chatId, userId) => {
-  try {
-    const userRef = getUserDoc(userId);
-    await updateDoc(userRef, {
-      [`unreadCounts.${chatId}`]: 0,
-    });
-    return true;
-  } catch (error) {
-    console.error("Error updating unread count:", error);
-    return false;
-  }
-};
 
-// Increment unread count for a chat
-export const incrementUnreadCount = async (chatId, userId) => {
-  try {
-    const userRef = getUserDoc(userId);
-    const userDoc = await getDoc(userRef);
-    if (userDoc.exists()) {
-      const currentCount = userDoc.data()?.unreadCounts?.[chatId] || 0;
-      await updateDoc(userRef, {
-        [`unreadCounts.${chatId}`]: currentCount + 1,
-      });
-    }
-    return true;
-  } catch (error) {
-    console.error("Error incrementing unread count:", error);
-    return false;
-  }
-};
-
-// Listen to unread counts
-export const listenToUnreadCounts = (userId, callback) => {
-  const userRef = getUserDoc(userId);
-  return onSnapshot(userRef, (doc) => {
-    if (doc.exists()) {
-      const data = doc.data();
-      callback(data.unreadCounts || {});
-    }
-  });
-};
-
-export const updateUserAvatar = async (userId, avatarUrl) => {
-  try {
-    const userRef = getUserDoc(userId);
-    await updateDoc(userRef, {
-      avatar: avatarUrl,
-      photoURL: avatarUrl,
-      updatedAt: new Date().toISOString(),
-    });
-    return true;
-  } catch (error) {
-    console.error("Error updating avatar:", error);
-    return false;
-  }
-};
+// app wide announcement banner, edited from the admin panel
+export const listenToAnnouncement = (callback) =>
+  onSnapshot(
+    doc(db, "appConfig", "announcement"),
+    (snap) => callback(snap.exists() ? snap.data() : null),
+    () => callback(null)
+  );

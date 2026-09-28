@@ -1,242 +1,89 @@
-// utils/dateUtils.js
+// timestamps come back as firestore Timestamps, ISO strings or plain Dates
+// depending on where they were written, so everything goes through here first
+export const toDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value.toDate === "function") return value.toDate();
+  if (typeof value.seconds === "number") return new Date(value.seconds * 1000);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
 
-/**
- * Format duration in seconds to MM:SS format
- * @param {number} seconds - Duration in seconds
- * @returns {string} Formatted duration string (e.g., "05:23")
- */
+const pad = (n) => n.toString().padStart(2, "0");
+
+// 83 -> "1:23", used by voice notes and calls
 export const formatDuration = (seconds) => {
-  if (!seconds || isNaN(seconds)) return "00:00";
-
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins.toString().padStart(2, "0")}:${secs
-    .toString()
-    .padStart(2, "0")}`;
+  const total = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+  const hours = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  return hours > 0 ? `${hours}:${pad(mins)}:${pad(secs)}` : `${mins}:${pad(secs)}`;
 };
 
-/**
- * Format date to relative time (e.g., "2 minutes ago", "yesterday")
- * @param {Date|Timestamp} date - Date to format
- * @returns {string} Relative time string
- */
-export const formatRelativeTime = (date) => {
-  if (!date) return "";
-
-  const dateObj = date.toDate ? date.toDate() : new Date(date);
-  const now = new Date();
-  const diffMs = now - dateObj;
-  const diffSecs = Math.floor(diffMs / 1000);
-  const diffMins = Math.floor(diffSecs / 60);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffSecs < 60) {
-    return "just now";
-  } else if (diffMins < 60) {
-    return `${diffMins} minute${diffMins === 1 ? "" : "s"} ago`;
-  } else if (diffHours < 24) {
-    return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
-  } else if (diffDays === 1) {
-    return "yesterday";
-  } else if (diffDays < 7) {
-    return `${diffDays} days ago`;
-  } else {
-    return dateObj.toLocaleDateString();
-  }
+export const isToday = (value) => {
+  const date = toDate(value);
+  return !!date && date.toDateString() === new Date().toDateString();
 };
 
-/**
- * Format date to time string (HH:MM AM/PM)
- * @param {Date|Timestamp} date - Date to format
- * @returns {string} Formatted time string
- */
-export const formatTime = (date) => {
-  if (!date) return "";
-
-  const dateObj = date.toDate ? date.toDate() : new Date(date);
-  return dateObj.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
+export const isYesterday = (value) => {
+  const date = toDate(value);
+  if (!date) return false;
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  return date.toDateString() === yesterday.toDateString();
 };
 
-/**
- * Format date to full date string (MMM DD, YYYY)
- * @param {Date|Timestamp} date - Date to format
- * @returns {string} Formatted date string
- */
-export const formatDate = (date) => {
+export const formatTime = (value) => {
+  const date = toDate(value);
   if (!date) return "";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+};
 
-  const dateObj = date.toDate ? date.toDate() : new Date(date);
-  return dateObj.toLocaleDateString([], {
+export const formatDate = (value) => {
+  const date = toDate(value);
+  if (!date) return "";
+  return date.toLocaleDateString([], {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
 };
 
-/**
- * Format date to datetime string (MMM DD, YYYY at HH:MM AM/PM)
- * @param {Date|Timestamp} date - Date to format
- * @returns {string} Formatted datetime string
- */
-export const formatDateTime = (date) => {
+export const formatMonthYear = (value) => {
+  const date = toDate(value);
   if (!date) return "";
-
-  const dateObj = date.toDate ? date.toDate() : new Date(date);
-  return `${formatDate(dateObj)} at ${formatTime(dateObj)}`;
+  return date.toLocaleDateString([], { month: "long", year: "numeric" });
 };
 
-/**
- * Get relative time for call duration display
- * @param {number} seconds - Duration in seconds
- * @returns {string} Formatted duration string with units
- */
-export const formatCallDuration = (seconds) => {
-  if (!seconds || seconds < 0) return "0:00";
-
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, "0")}:${secs
-      .toString()
-      .padStart(2, "0")}`;
-  } else {
-    return `${minutes}:${secs.toString().padStart(2, "0")}`;
-  }
+// sidebar style: time for today, "Yesterday", weekday for this week, then a date
+export const formatChatListTime = (value) => {
+  const date = toDate(value);
+  if (!date || date.getTime() === 0) return "";
+  if (isToday(date)) return formatTime(date);
+  if (isYesterday(date)) return "Yesterday";
+  const daysAgo = (Date.now() - date.getTime()) / 86400000;
+  if (daysAgo < 7) return date.toLocaleDateString([], { weekday: "short" });
+  return date.toLocaleDateString([], { day: "numeric", month: "short" });
 };
 
-/**
- * Get time ago string with more detail
- * @param {Date|Timestamp} date - Date to format
- * @returns {string} Detailed time ago string
- */
-export const getTimeAgo = (date) => {
+export const formatRelativeTime = (value) => {
+  const date = toDate(value);
   if (!date) return "";
+  const diffSecs = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  const mins = Math.floor(diffSecs / 60);
+  const hours = Math.floor(mins / 60);
+  const days = Math.floor(hours / 24);
 
-  const dateObj = date.toDate ? date.toDate() : new Date(date);
-  const now = new Date();
-  const diffMs = now - dateObj;
-  const diffSecs = Math.floor(diffMs / 1000);
-  const diffMins = Math.floor(diffSecs / 60);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-  const diffWeeks = Math.floor(diffDays / 7);
-  const diffMonths = Math.floor(diffDays / 30);
-  const diffYears = Math.floor(diffDays / 365);
-
-  if (diffSecs < 60) {
-    return `${diffSecs} second${diffSecs === 1 ? "" : "s"} ago`;
-  } else if (diffMins < 60) {
-    return `${diffMins} minute${diffMins === 1 ? "" : "s"} ago`;
-  } else if (diffHours < 24) {
-    return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
-  } else if (diffDays === 1) {
-    return "yesterday";
-  } else if (diffDays < 7) {
-    return `${diffDays} days ago`;
-  } else if (diffWeeks === 1) {
-    return "last week";
-  } else if (diffWeeks < 4) {
-    return `${diffWeeks} weeks ago`;
-  } else if (diffMonths === 1) {
-    return "last month";
-  } else if (diffMonths < 12) {
-    return `${diffMonths} months ago`;
-  } else if (diffYears === 1) {
-    return "last year";
-  } else {
-    return `${diffYears} years ago`;
-  }
+  if (diffSecs < 60) return "just now";
+  if (mins < 60) return `${mins} min${mins === 1 ? "" : "s"} ago`;
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  return formatDate(date);
 };
 
-/**
- * Check if a date is today
- * @param {Date|Timestamp} date - Date to check
- * @returns {boolean} True if date is today
- */
-export const isToday = (date) => {
-  if (!date) return false;
-
-  const dateObj = date.toDate ? date.toDate() : new Date(date);
-  const today = new Date();
-  return dateObj.toDateString() === today.toDateString();
-};
-
-/**
- * Check if a date is yesterday
- * @param {Date|Timestamp} date - Date to check
- * @returns {boolean} True if date is yesterday
- */
-export const isYesterday = (date) => {
-  if (!date) return false;
-
-  const dateObj = date.toDate ? date.toDate() : new Date(date);
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  return dateObj.toDateString() === yesterday.toDateString();
-};
-
-/**
- * Get message timestamp display
- * @param {Date|Timestamp} timestamp - Message timestamp
- * @returns {string} Formatted timestamp for message display
- */
-export const getMessageTimestamp = (timestamp) => {
-  if (!timestamp) return "";
-
-  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-
-  if (isToday(date)) {
-    return formatTime(date);
-  } else if (isYesterday(date)) {
-    return `Yesterday, ${formatTime(date)}`;
-  } else {
-    return formatDateTime(date);
-  }
-};
-
-/**
- * Group messages by date
- * @param {Array} messages - Array of message objects
- * @returns {Object} Messages grouped by date
- */
-export const groupMessagesByDate = (messages) => {
-  const groups = {};
-
-  messages.forEach((message) => {
-    const date = message.timestamp?.toDate?.() || new Date(message.timestamp);
-    const dateKey = date.toDateString();
-
-    if (!groups[dateKey]) {
-      groups[dateKey] = {
-        date: date,
-        messages: [],
-      };
-    }
-
-    groups[dateKey].messages.push(message);
-  });
-
-  return groups;
-};
-
-/**
- * Get header for date group
- * @param {Date} date - Date to get header for
- * @returns {string} Date header string
- */
-export const getDateGroupHeader = (date) => {
-  if (isToday(date)) {
-    return "Today";
-  } else if (isYesterday(date)) {
-    return "Yesterday";
-  } else {
-    return formatDate(date);
-  }
+export const getDateGroupHeader = (value) => {
+  if (isToday(value)) return "Today";
+  if (isYesterday(value)) return "Yesterday";
+  return formatDate(value);
 };

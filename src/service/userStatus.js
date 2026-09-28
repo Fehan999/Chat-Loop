@@ -1,129 +1,55 @@
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "../firebase/config";
 import { updateUserStatus } from "../firebase/firestoreService";
 
-let statusInterval = null;
-let currentUser = null;
-let lastStatus = null;
-let heartbeatCount = 0;
+// refreshes lastSeen every couple of minutes so other clients can tell
+// a live "online" apart from a tab that crashed
+const HEARTBEAT_MS = 2 * 60 * 1000;
 
-export const initializeUserStatus = () => {
-  onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      currentUser = user;
-      lastStatus = "online";
-      heartbeatCount = 0;
+const startPresence = (uid) => {
+  let current = null;
 
-      console.log(
-        `[Status] User ${user.uid} logged in, setting status to online`
-      );
+  const setStatus = (status, force = false) => {
+    if (status === current && !force) return;
+    current = status;
+    updateUserStatus(uid, status);
+  };
 
-      // Set user as online immediately
-      await updateUserStatus(user.uid, "online");
+  const visibleStatus = () => (document.hidden ? "away" : "online");
+  const onVisibilityChange = () => setStatus(visibleStatus());
+  const onPageHide = () => updateUserStatus(uid, "offline");
 
-      // Update status every 45 seconds (optimized interval)
-      if (statusInterval) clearInterval(statusInterval);
-      statusInterval = setInterval(async () => {
-        if (currentUser) {
-          heartbeatCount++;
+  setStatus("online");
+  const heartbeat = setInterval(() => setStatus(visibleStatus(), true), HEARTBEAT_MS);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("pagehide", onPageHide);
 
-          // Check if user is actually active
-          const isActive = document.hasFocus() && !document.hidden;
-          const newStatus = isActive ? "online" : "away";
-
-          // Only update if status changed or every 3rd heartbeat (2.25 minutes)
-          if (newStatus !== lastStatus || heartbeatCount >= 3) {
-            await updateUserStatus(currentUser.uid, newStatus);
-            lastStatus = newStatus;
-            heartbeatCount = 0;
-            console.log(
-              `[Status] Heartbeat: User ${currentUser.uid} status updated to ${newStatus}`
-            );
-          }
-        }
-      }, 45000); // 45 seconds
-
-      // Handle page/tab close - set offline
-      const handleBeforeUnload = async () => {
-        if (currentUser) {
-          console.log(
-            `[Status] User ${currentUser.uid} closing tab, setting offline`
-          );
-          await updateUserStatus(currentUser.uid, "offline");
-        }
-      };
-
-      window.addEventListener("beforeunload", handleBeforeUnload);
-
-      // Handle visibility change (tab switch)
-      const handleVisibilityChange = async () => {
-        if (currentUser) {
-          if (document.hidden) {
-            console.log(
-              `[Status] User ${currentUser.uid} switched tabs, setting away`
-            );
-            await updateUserStatus(currentUser.uid, "away");
-            lastStatus = "away";
-          } else {
-            console.log(
-              `[Status] User ${currentUser.uid} returned to tab, setting online`
-            );
-            await updateUserStatus(currentUser.uid, "online");
-            lastStatus = "online";
-            heartbeatCount = 0;
-          }
-        }
-      };
-
-      document.addEventListener("visibilitychange", handleVisibilityChange);
-
-      // Handle user activity (mouse movement, clicks, typing)
-      let activityTimeout;
-      const resetActivity = async () => {
-        if (currentUser && document.hasFocus() && !document.hidden) {
-          if (lastStatus !== "online") {
-            await updateUserStatus(currentUser.uid, "online");
-            lastStatus = "online";
-            console.log(
-              `[Status] User ${currentUser.uid} active again, setting online`
-            );
-          }
-          heartbeatCount = 0;
-        }
-      };
-
-      const activityEvents = ["mousedown", "keydown", "scroll", "touchstart"];
-      activityEvents.forEach((event) => {
-        window.addEventListener(event, () => {
-          clearTimeout(activityTimeout);
-          activityTimeout = setTimeout(resetActivity, 1000);
-        });
-      });
-
-      return () => {
-        window.removeEventListener("beforeunload", handleBeforeUnload);
-        document.removeEventListener(
-          "visibilitychange",
-          handleVisibilityChange
-        );
-        activityEvents.forEach((event) => {
-          window.removeEventListener(event, resetActivity);
-        });
-        clearTimeout(activityTimeout);
-      };
-    } else if (statusInterval) {
-      clearInterval(statusInterval);
-      statusInterval = null;
-      currentUser = null;
-      lastStatus = null;
-      heartbeatCount = 0;
-    }
-  });
+  return () => {
+    clearInterval(heartbeat);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("pagehide", onPageHide);
+  };
 };
 
-export const cleanupUserStatus = () => {
-  if (statusInterval) {
-    clearInterval(statusInterval);
-    statusInterval = null;
-  }
+// call once from App. returns a cleanup for the effect
+export const initializeUserStatus = () => {
+  let stopPresence = null;
+
+  const unsubscribe = onAuthStateChanged(auth, (user) => {
+    stopPresence?.();
+    stopPresence = user ? startPresence(user.uid) : null;
+  });
+
+  return () => {
+    unsubscribe();
+    stopPresence?.();
+  };
+};
+
+// marks the user offline before the session goes away, otherwise the
+// write would be rejected once we're signed out
+export const logout = async () => {
+  const uid = auth.currentUser?.uid;
+  if (uid) await updateUserStatus(uid, "offline");
+  await signOut(auth);
 };
