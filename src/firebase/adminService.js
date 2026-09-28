@@ -10,6 +10,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
 } from "firebase/firestore";
 import { ADMIN_EMAILS, GUEST_EMAIL } from "../constants";
 import { toDate } from "../utils/dateUtils";
@@ -33,7 +34,7 @@ export const maskEmail = (email = "") => {
   return `${name.slice(0, 2)}•••@${domain}`;
 };
 
-// the listeners are used by the owner and the guest login, the writes are owner only
+// the listeners are used by the admin and the guest login, the writes are admin only
 
 export const listenToAllUsers = (callback) =>
   onSnapshot(
@@ -76,14 +77,35 @@ export const listenToReports = (callback) =>
     }
   );
 
+const countOf = async (q) => (await getCountFromServer(q)).data().count;
+
 // counts are aggregation queries, firestore doesn't download the documents.
-// they need read access to every chat though, so only the owner gets them
+// they need read access to every chat though, so only the admin runs them.
+//
+// ai chat history also lives in subcollections called "messages", so the chat
+// messages are the ones with a senderId (ai messages only have a role). that
+// filter needs the collection group index in firestore.indexes.json, until it's
+// deployed the total is shown as is.
+// a chat doc exists as soon as someone opens a friend's chat, so conversations
+// only count chats that have a last message
 export const fetchCounts = async () => {
-  const [chats, messages] = await Promise.all([
-    getCountFromServer(collection(db, "chats")),
-    getCountFromServer(collectionGroup(db, "messages")),
+  const everything = collectionGroup(db, "messages");
+  const [all, chatMessages, conversations] = await Promise.allSettled([
+    countOf(everything),
+    countOf(query(everything, where("senderId", "!=", null))),
+    countOf(query(collection(db, "chats"), where("lastMessage", ">", ""))),
   ]);
-  return { conversations: chats.data().count, messages: messages.data().count };
+  if (chatMessages.status === "rejected") {
+    console.warn("Message count without the ai filter:", chatMessages.reason?.message);
+  }
+
+  const total = all.status === "fulfilled" ? all.value : null;
+  const messages = chatMessages.status === "fulfilled" ? chatMessages.value : total;
+  return {
+    messages,
+    aiMessages: chatMessages.status === "fulfilled" && total !== null ? total - messages : null,
+    conversations: conversations.status === "fulfilled" ? conversations.value : null,
+  };
 };
 
 // the admin's latest counts are saved here so the guest login can show them

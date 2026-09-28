@@ -94,10 +94,6 @@ const OverviewSection = ({ users, reports, counts, canEdit, onOpen }) => {
     .filter((u) => u.createdAt)
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 5);
-  const averagePerChat =
-    counts.messages && counts.conversations
-      ? Math.round(counts.messages / counts.conversations)
-      : null;
   const countsHint = counts.updatedAt
     ? `counted ${formatRelativeTime(counts.updatedAt)}`
     : "waiting for the first count";
@@ -122,13 +118,13 @@ const OverviewSection = ({ users, reports, counts, canEdit, onOpen }) => {
           icon={FiMessageSquare}
           label="Messages sent"
           value={counts.messages}
-          hint={countsHint}
+          hint={counts.aiMessages ? `+${compact(counts.aiMessages)} with ChatLoop AI` : countsHint}
         />
         <StatTile
           icon={FiMessageCircle}
           label="Conversations"
           value={counts.conversations}
-          hint={averagePerChat !== null ? `about ${averagePerChat} messages each` : countsHint}
+          hint={countsHint}
         />
       </div>
 

@@ -9,9 +9,34 @@
     height: 100%;
   }
 
+  html {
+    /* stops ios from bumping the text size when the phone is rotated */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
     @apply bg-gray-50 text-gray-900 antialiased;
     font-feature-settings: "cv11", "ss01";
+  }
+
+  /* no double tap zoom on buttons and links, taps respond right away */
+  a,
+  button,
+  [role="button"],
+  label {
+    touch-action: manipulation;
+  }
+}
+
+/* ios safari zooms the whole page into any field with text under 16px when it's
+   focused, and doesn't zoom back out. phones get 16px fields, desktop keeps the
+   smaller size. outside the layers so it wins over text-sm on the inputs */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
   }
 }
 
