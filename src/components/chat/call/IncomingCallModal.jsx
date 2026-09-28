@@ -1,161 +1,88 @@
-// components/chat/call/IncomingCallModal.jsx
-import React, { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
+import { useEffect, useRef } from "react";
 import { FiPhone, FiPhoneOff, FiVideo } from "react-icons/fi";
+import callService, { RING_TIMEOUT_MS } from "../../../firebase/callService";
+import { avatarFor } from "../../../utils/userDisplay";
 
-const IncomingCallModal = ({ call, onAccept, onReject }) => {
+// rings until answered, declined, or the caller gives up
+const IncomingCallModal = ({ call, onAccept, onReject, onDismiss }) => {
   const audioRef = useRef(null);
-  const timeoutRef = useRef(null);
+  // parent passes a new function every render, keep the latest without re-running the effect
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
 
   useEffect(() => {
-    // Play ringtone
-    const playRingtone = async () => {
-      try {
-        if (audioRef.current) {
-          audioRef.current.loop = true;
-          audioRef.current.volume = 0.5;
-          await audioRef.current.play();
-        }
-      } catch (error) {
-        console.log("Ringtone play failed:", error);
-        // Fallback to Web Audio
-        playFallbackRingtone();
-      }
-    };
+    const dismiss = () => dismissRef.current();
+    const audio = audioRef.current;
+    if (audio) {
+      audio.volume = 0.6;
+      audio.play().catch(() => {
+        // autoplay blocked until the user interacts with the page, the modal still shows
+      });
+    }
 
-    const playFallbackRingtone = () => {
-      try {
-        const audioContext = new (window.AudioContext ||
-          window.webkitAudioContext)();
-
-        const playBeep = () => {
-          const oscillator = audioContext.createOscillator();
-          const gainNode = audioContext.createGain();
-          oscillator.connect(gainNode);
-          gainNode.connect(audioContext.destination);
-
-          const now = audioContext.currentTime;
-          oscillator.frequency.value = 800;
-          gainNode.gain.value = 0.3;
-          oscillator.start(now);
-          gainNode.gain.exponentialRampToValueAtTime(0.00001, now + 1);
-          oscillator.stop(now + 1);
-        };
-
-        playBeep();
-        timeoutRef.current = setInterval(playBeep, 2000);
-
-        if (audioContext.state === "suspended") {
-          audioContext.resume();
-        }
-      } catch (e) {
-        console.log("Fallback ringtone failed:", e);
-      }
-    };
-
-    playRingtone();
-
-    // Auto reject after 30 seconds
-    const autoRejectTimeout = setTimeout(() => {
-      console.log("Auto rejecting call due to timeout");
-      onReject(call.id);
-    }, 30000);
+    const unsubscribe = callService.listenForCall(call.id, (data) => {
+      if (!data || data.status !== "calling") dismiss();
+    });
+    const timeout = setTimeout(dismiss, RING_TIMEOUT_MS + 5000);
 
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-      if (timeoutRef.current) {
-        clearInterval(timeoutRef.current);
-      }
-      clearTimeout(autoRejectTimeout);
+      audio?.pause();
+      unsubscribe();
+      clearTimeout(timeout);
     };
-  }, [call.id, onReject]);
+  }, [call.id]);
 
-  const handleAccept = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-    }
-    if (timeoutRef.current) {
-      clearInterval(timeoutRef.current);
-    }
-    onAccept(call);
-  };
-
-  const handleReject = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-    }
-    if (timeoutRef.current) {
-      clearInterval(timeoutRef.current);
-    }
-    onReject(call.id);
-  };
+  const Icon = call.isVideo ? FiVideo : FiPhone;
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
+      className="fixed inset-0 z-[75] flex items-end justify-center bg-gray-900/60 p-4 backdrop-blur-sm sm:items-center"
     >
-      <audio ref={audioRef} src="/ringtone.mp3" preload="auto" />
+      <audio ref={audioRef} src="/ringtone.mp3" loop preload="auto" />
 
       <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="bg-white rounded-2xl p-6 max-w-sm mx-4 text-center"
+        initial={{ y: 30, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 30, opacity: 0 }}
+        className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl"
       >
-        <div className="relative mb-4">
-          <div className="w-24 h-24 bg-indigo-100 rounded-full flex items-center justify-center mx-auto animate-pulse">
-            {call.isVideo ? (
-              <FiVideo className="text-indigo-500 text-4xl" />
-            ) : (
-              <FiPhone className="text-indigo-500 text-4xl" />
-            )}
-          </div>
-          <div className="absolute -top-2 -right-2">
-            <div className="w-4 h-4 bg-green-500 rounded-full animate-ping"></div>
-          </div>
+        <div className="relative mx-auto mb-4 h-24 w-24">
+          <span className="absolute inset-0 animate-ping rounded-full bg-indigo-200" />
+          <img
+            src={call.callerAvatar || avatarFor({ name: call.callerName })}
+            alt=""
+            className="relative h-24 w-24 rounded-full object-cover ring-4 ring-white"
+          />
         </div>
-
-        <h3 className="text-xl font-semibold text-gray-900 mb-2">
-          Incoming {call.isVideo ? "Video" : "Audio"} Call
-        </h3>
-
-        <p className="text-gray-600 mb-2">
-          From{" "}
-          <span className="font-semibold">{call.callerName || "Unknown"}</span>
+        <h3 className="text-xl font-semibold text-gray-900">{call.callerName || "Someone"}</h3>
+        <p className="mt-1 flex items-center justify-center gap-1.5 text-sm text-gray-500">
+          <Icon /> Incoming {call.isVideo ? "video" : "voice"} call
         </p>
 
-        <p className="text-sm text-gray-400 mb-6">
-          {call.isVideo
-            ? "Video call is waiting..."
-            : "Audio call is waiting..."}
-        </p>
-
-        <div className="flex gap-4">
-          <button
-            onClick={handleReject}
-            className="flex-1 px-4 py-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
-          >
-            <FiPhoneOff />
-            Decline
-          </button>
-          <button
-            onClick={handleAccept}
-            className="flex-1 px-4 py-3 bg-green-500 text-white rounded-xl hover:bg-green-600 transition-colors flex items-center justify-center gap-2"
-          >
-            {call.isVideo ? <FiVideo /> : <FiPhone />}
-            Accept
-          </button>
-        </div>
-
-        <div className="mt-4 pt-4 border-t border-gray-100">
-          <div className="flex items-center justify-center gap-2 text-xs text-gray-400">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span>Ringing...</span>
+        <div className="mt-8 flex justify-center gap-10">
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={() => onReject(call)}
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500 text-white shadow-lg shadow-red-500/30 transition hover:bg-red-600"
+              aria-label="Decline"
+            >
+              <FiPhoneOff className="text-xl" />
+            </button>
+            <span className="text-xs text-gray-500">Decline</span>
+          </div>
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={() => onAccept(call)}
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 transition hover:bg-emerald-600"
+              aria-label="Accept"
+            >
+              <Icon className="text-xl" />
+            </button>
+            <span className="text-xs text-gray-500">Accept</span>
           </div>
         </div>
       </motion.div>

@@ -1,6 +1,6 @@
-// components/chat/call/CallInterface.jsx
 import { motion } from "framer-motion";
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import toast from "react-hot-toast";
 import {
   FiMaximize2,
   FiMic,
@@ -12,453 +12,261 @@ import {
   FiVideoOff,
 } from "react-icons/fi";
 import callService from "../../../firebase/callService";
-import webrtcService from "../../../service/webrtcService";
+import { createCallSession } from "../../../service/webrtcService";
+import { formatDuration } from "../../../utils/dateUtils";
 
-const CallInterface = ({
-  callId,
-  chat,
-  currentUser,
-  isInitiator,
-  onEndCall,
-  isVideo: initialIsVideo,
-}) => {
-  const [localStream, setLocalStream] = useState(null);
+const END_MESSAGES = {
+  rejected: "Call declined",
+  missed: "No answer",
+  ended: "Call ended",
+};
+
+// stays mounted for the whole call, minimising only changes the layout so
+// the media elements (and the audio) keep playing
+const CallInterface = ({ call, currentUserId, onClose }) => {
+  const [callStatus, setCallStatus] = useState(call.isInitiator ? "calling" : "active");
+  const [connection, setConnection] = useState("new");
   const [remoteStream, setRemoteStream] = useState(null);
-  const [isAudioMuted, setIsAudioMuted] = useState(false);
-  const [isVideoMuted, setIsVideoMuted] = useState(false);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [callDuration, setCallDuration] = useState(0);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [isVideo, setIsVideo] = useState(initialIsVideo);
-  const [isConnected, setIsConnected] = useState(false);
+  const [localStream, setLocalStream] = useState(null);
+  const [muted, setMuted] = useState(false);
+  const [cameraOff, setCameraOff] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [seconds, setSeconds] = useState(0);
 
-  const localVideoRef = useRef(null);
+  const sessionRef = useRef(null);
+  const connectedAtRef = useRef(null);
+  const closedRef = useRef(false);
   const remoteVideoRef = useRef(null);
-  const callStartTime = useRef(null);
-  const durationInterval = useRef(null);
-  const audioElementRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteAudioRef = useRef(null);
 
-  // Initialize call
+  // single exit path so the tracks always get stopped
+  const finish = useRef(null);
+  finish.current = (message) => {
+    if (closedRef.current) return;
+    closedRef.current = true;
+    sessionRef.current?.close();
+    if (message) toast(message, { icon: "📞" });
+    onClose();
+  };
+
   useEffect(() => {
-    let isMounted = true;
-
-    const init = async () => {
-      try {
-        console.log("Initializing call, isInitiator:", isInitiator);
-
-        const stream = await webrtcService.initializeCall(isVideo);
-        if (isMounted) {
-          setLocalStream(stream);
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-          }
+    const session = createCallSession({
+      callId: call.id,
+      userId: currentUserId,
+      isVideo: call.isVideo,
+      isInitiator: call.isInitiator,
+      onLocalStream: setLocalStream,
+      onRemoteStream: setRemoteStream,
+      onConnectionChange: (state) => {
+        setConnection(state);
+        if (state === "connected" && !connectedAtRef.current) connectedAtRef.current = Date.now();
+        if (state === "failed") {
+          callService.endCall(call.id, 0);
+          finish.current("Connection lost");
         }
-
-        if (isInitiator) {
-          const offer = await webrtcService.createOffer();
-          await callService.sendCallSignal(callId, {
-            type: "offer",
-            data: offer,
-          });
-          console.log("Offer sent");
-        }
-      } catch (error) {
-        console.error("Failed to initialize call:", error);
-        onEndCall();
-      }
-    };
-
-    init();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  // Handle WebRTC events
-  useEffect(() => {
-    const handleEvent = (event, data) => {
-      console.log("WebRTC Event:", event);
-
-      switch (event) {
-        case "remoteStream":
-          console.log("✅ Got remote stream!");
-          setRemoteStream(data);
-
-          // Create audio element for playback
-          if (data) {
-            if (audioElementRef.current) {
-              audioElementRef.current.pause();
-              audioElementRef.current.srcObject = null;
-            }
-            audioElementRef.current = new Audio();
-            audioElementRef.current.srcObject = data;
-            audioElementRef.current.autoplay = true;
-            audioElementRef.current.play().catch((e) => {
-              console.log("Auto-play blocked, waiting for user interaction");
-              // Create a one-time user interaction listener
-              const playAudio = () => {
-                if (audioElementRef.current) {
-                  audioElementRef.current
-                    .play()
-                    .catch((e) => console.log("Play failed:", e));
-                }
-                document.removeEventListener("click", playAudio);
-                document.removeEventListener("touchstart", playAudio);
-              };
-              document.addEventListener("click", playAudio);
-              document.addEventListener("touchstart", playAudio);
-            });
-          }
-
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = data;
-          }
-          setIsConnected(true);
-          if (!callStartTime.current) {
-            callStartTime.current = Date.now();
-            durationInterval.current = setInterval(() => {
-              if (callStartTime.current) {
-                setCallDuration(
-                  Math.floor((Date.now() - callStartTime.current) / 1000)
-                );
-              }
-            }, 1000);
-          }
-          break;
-        case "connectionState":
-          console.log("Connection state:", data);
-          if (data === "connected") {
-            console.log("✅ Call connected!");
-            setIsConnected(true);
-            if (!callStartTime.current) {
-              callStartTime.current = Date.now();
-              durationInterval.current = setInterval(() => {
-                if (callStartTime.current) {
-                  setCallDuration(
-                    Math.floor((Date.now() - callStartTime.current) / 1000)
-                  );
-                }
-              }, 1000);
-            }
-          }
-          break;
-        case "audioToggled":
-          setIsAudioMuted(data);
-          break;
-        case "videoToggled":
-          setIsVideoMuted(data);
-          break;
-        case "screenShareStarted":
-          setIsScreenSharing(true);
-          break;
-        case "screenShareStopped":
-          setIsScreenSharing(false);
-          break;
-        case "callEnded":
-          if (durationInterval.current) clearInterval(durationInterval.current);
-          if (audioElementRef.current) {
-            audioElementRef.current.pause();
-            audioElementRef.current.srcObject = null;
-          }
-          onEndCall();
-          break;
-        default:
-          break;
-      }
-    };
-
-    webrtcService.addListener(handleEvent);
-    return () => webrtcService.removeListener(handleEvent);
-  }, [onEndCall]);
-
-  // Handle signaling from Firestore
-  useEffect(() => {
-    const unsubscribe = callService.listenForCallSignals(
-      callId,
-      async (signal) => {
-        console.log("Received signal:", signal.type);
-        console.log(
-          "Current signaling state:",
-          webrtcService.peerConnection?.signalingState
-        );
-
-        try {
-          switch (signal.type) {
-            case "offer":
-              console.log("Processing offer...");
-              const answer = await webrtcService.handleOffer(signal.data);
-              if (answer) {
-                console.log("Sending answer back");
-                await callService.sendCallSignal(callId, {
-                  type: "answer",
-                  data: answer,
-                });
-              }
-              break;
-            case "answer":
-              console.log("Processing answer...");
-              await webrtcService.handleAnswer(signal.data);
-              console.log("Answer processed");
-              break;
-            case "ice-candidate":
-              await webrtcService.handleIceCandidate(signal.data);
-              break;
-            default:
-              break;
-          }
-        } catch (error) {
-          console.error("Error handling signal:", error);
-        }
-      }
-    );
-
-    return () => unsubscribe();
-  }, [callId]);
-
-  // Listen for call end from Firestore
-  useEffect(() => {
-    const unsubscribe = callService.listenForCall(callId, (callData) => {
-      if (
-        callData &&
-        (callData.status === "ended" ||
-          callData.status === "rejected" ||
-          callData.status === "missed")
-      ) {
-        console.log("Call ended by remote user");
-        if (durationInterval.current) clearInterval(durationInterval.current);
-        if (audioElementRef.current) {
-          audioElementRef.current.pause();
-          audioElementRef.current.srcObject = null;
-        }
-        webrtcService.endCall();
-        onEndCall();
-      }
+      },
     });
-    return () => unsubscribe();
-  }, [callId, onEndCall]);
+    sessionRef.current = session;
 
-  // Update video refs
-  useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
-  }, [remoteStream]);
+    session.start().catch((error) => {
+      console.error("Call setup failed:", error);
+      const denied = error.name === "NotAllowedError";
+      callService.missCall(call.id);
+      callService.endCall(call.id, 0);
+      finish.current(
+        denied ? "Camera or microphone access was blocked" : "Couldn't start the call"
+      );
+    });
 
-  useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [localStream]);
-
-  const handleEndCall = async () => {
-    console.log("Ending call");
-    if (callStartTime.current) {
-      const duration = Math.floor((Date.now() - callStartTime.current) / 1000);
-      await callService.endCall(callId, duration);
-    }
-    if (durationInterval.current) clearInterval(durationInterval.current);
-    if (audioElementRef.current) {
-      audioElementRef.current.pause();
-      audioElementRef.current.srcObject = null;
-    }
-    webrtcService.endCall();
-    onEndCall();
-  };
-  useEffect(() => {
-    // Function to force audio playback on user interaction
-    const enableAudio = () => {
-      if (audioElementRef.current) {
-        audioElementRef.current
-          .play()
-          .catch((e) => console.log("Play failed:", e));
-      }
-      // Also try to resume any AudioContext
-      if (window.AudioContext || window.webkitAudioContext) {
-        const audioContext = new (window.AudioContext ||
-          window.webkitAudioContext)();
-        audioContext
-          .resume()
-          .then(() => {
-            console.log("AudioContext resumed");
-          })
-          .catch((e) => console.log("AudioContext resume failed:", e));
-      }
-      // Remove listeners after first interaction
-      document.removeEventListener("click", enableAudio);
-      document.removeEventListener("touchstart", enableAudio);
-    };
-
-    // Add listeners for user interaction to enable audio
-    document.addEventListener("click", enableAudio);
-    document.addEventListener("touchstart", enableAudio);
+    const unsubscribe = callService.listenForCall(call.id, (data) => {
+      if (!data) return;
+      setCallStatus(data.status);
+      if (END_MESSAGES[data.status]) finish.current(END_MESSAGES[data.status]);
+    });
 
     return () => {
-      document.removeEventListener("click", enableAudio);
-      document.removeEventListener("touchstart", enableAudio);
+      unsubscribe();
+      session.close();
     };
-  }, []);
+  }, [call.id, call.isInitiator, call.isVideo, currentUserId]);
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs
-      .toString()
-      .padStart(2, "0")}`;
+  const connected = connection === "connected";
+  const showRemoteVideo = call.isVideo && !!remoteStream && connected;
+
+  // the video element only exists once we're connected, so this re-runs then
+  useEffect(() => {
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteStream;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
+  }, [remoteStream, minimized, showRemoteVideo]);
+
+  useEffect(() => {
+    if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
+  }, [localStream, minimized]);
+
+  useEffect(() => {
+    if (connection !== "connected") return undefined;
+    const timer = setInterval(
+      () => setSeconds(Math.floor((Date.now() - connectedAtRef.current) / 1000)),
+      1000
+    );
+    return () => clearInterval(timer);
+  }, [connection]);
+
+  const hangUp = async () => {
+    if (callStatus === "calling") {
+      await callService.missCall(call.id);
+    } else {
+      const duration = connectedAtRef.current
+        ? Math.floor((Date.now() - connectedAtRef.current) / 1000)
+        : 0;
+      await callService.endCall(call.id, duration);
+    }
+    finish.current();
   };
 
-  if (isMinimized) {
-    return (
-      <motion.div
-        initial={{ y: 100, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        className="fixed bottom-4 right-4 w-80 bg-gray-900 rounded-2xl shadow-2xl z-50 overflow-hidden cursor-pointer"
-        onClick={() => setIsMinimized(false)}
-      >
-        <div className="relative h-48">
+  const toggleScreenShare = async () => {
+    const session = sessionRef.current;
+    try {
+      if (sharing) {
+        setSharing(await session.stopScreenShare());
+      } else {
+        setSharing(await session.startScreenShare(() => setSharing(false)));
+      }
+    } catch {
+      setSharing(false);
+    }
+  };
+
+  const statusLabel =
+    callStatus === "calling"
+      ? "Ringing..."
+      : connected
+        ? formatDuration(seconds)
+        : connection === "disconnected"
+          ? "Reconnecting..."
+          : "Connecting...";
+  const canShareScreen = call.isVideo && !!navigator.mediaDevices?.getDisplayMedia;
+
+  const controlClass = (active) =>
+    `flex h-12 w-12 items-center justify-center rounded-full transition ${
+      active ? "bg-white text-gray-900" : "bg-white/15 text-white hover:bg-white/25"
+    }`;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.97 }}
+      className={
+        minimized
+          ? "fixed bottom-4 right-4 z-[70] w-72 overflow-hidden rounded-2xl bg-gray-900 shadow-2xl"
+          : "fixed inset-0 z-[70] flex flex-col bg-gradient-to-b from-gray-900 to-indigo-950"
+      }
+    >
+      <audio ref={remoteAudioRef} autoPlay className="hidden" />
+
+      <div className={`relative ${minimized ? "h-40" : "flex-1"} overflow-hidden`}>
+        {showRemoteVideo ? (
           <video
             ref={remoteVideoRef}
             autoPlay
             playsInline
-            className="w-full h-full object-cover"
+            muted
+            className="h-full w-full bg-black object-cover"
           />
-          <div className="absolute bottom-2 left-2 right-2 flex justify-between items-center bg-black/50 rounded-lg px-3 py-2">
-            <span className="text-white text-sm font-mono">
-              {formatTime(callDuration)}
-            </span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleEndCall();
-              }}
-              className="p-1.5 bg-red-500 rounded-full"
-            >
-              <FiPhoneOff className="text-white text-sm" />
-            </button>
-          </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsMinimized(false);
-            }}
-            className="absolute top-2 right-2 p-1 bg-black/50 rounded-full"
-          >
-            <FiMaximize2 className="text-white text-xs" />
-          </button>
-        </div>
-      </motion.div>
-    );
-  }
-
-  return (
-    <motion.div
-      id="call-container"
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      className="fixed inset-0 bg-gray-900 z-50 flex flex-col"
-    >
-      <div className="flex-1 relative bg-black">
-        {!isConnected && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
-            <div className="text-center">
-              <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="text-white text-lg">Connecting...</p>
-              <p className="text-white/60 text-sm mt-2">Please wait</p>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center text-center text-white">
+            <div className="relative">
+              {callStatus === "calling" && (
+                <span className="absolute inset-0 animate-ping rounded-full bg-indigo-400/30" />
+              )}
+              <img
+                src={call.peer.avatar}
+                alt=""
+                className={`relative rounded-full object-cover ring-4 ring-white/10 ${
+                  minimized ? "h-16 w-16" : "h-28 w-28"
+                }`}
+              />
             </div>
+            {!minimized && <h2 className="mt-5 text-2xl font-semibold">{call.peer.name}</h2>}
+            <p className={`${minimized ? "mt-2 text-sm" : "mt-1"} font-mono text-indigo-200`}>
+              {statusLabel}
+            </p>
           </div>
         )}
 
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className="w-full h-full object-cover"
-        />
+        {showRemoteVideo && (
+          <div className="absolute left-4 top-4 rounded-xl bg-black/40 px-3 py-2 text-white backdrop-blur">
+            <p className="text-sm font-semibold">{call.peer.name}</p>
+            <p className="font-mono text-xs text-white/70">{statusLabel}</p>
+          </div>
+        )}
 
-        {isVideo && (
-          <div className="absolute bottom-4 right-4 w-40 h-56 bg-gray-800 rounded-xl overflow-hidden shadow-2xl border-2 border-white/20">
+        {call.isVideo && localStream && !minimized && (
+          <div className="absolute bottom-4 right-4 h-44 w-32 overflow-hidden rounded-2xl border border-white/20 bg-gray-800 shadow-xl sm:h-52 sm:w-40">
             <video
               ref={localVideoRef}
               autoPlay
               playsInline
               muted
-              className="w-full h-full object-cover"
+              className={`h-full w-full object-cover ${sharing ? "" : "-scale-x-100"}`}
             />
-            {isVideoMuted && (
-              <div className="absolute bottom-2 left-2 bg-black/50 rounded-full p-1">
-                <FiVideoOff className="text-white text-xs" />
+            {cameraOff && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-800 text-white/60">
+                <FiVideoOff className="text-2xl" />
               </div>
             )}
           </div>
         )}
 
-        <div className="absolute top-4 left-4 bg-black/50 rounded-lg px-4 py-2">
-          <p className="text-white font-semibold">{chat.name}</p>
-          <p className="text-white/70 text-sm font-mono">
-            {formatTime(callDuration)}
-          </p>
-          <p className="text-white/50 text-xs mt-1">
-            {isConnected ? "Connected" : "Connecting..."}
-          </p>
-        </div>
+        <button
+          onClick={() => setMinimized((v) => !v)}
+          className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/30 text-white hover:bg-black/50"
+          aria-label={minimized ? "Expand call" : "Minimise call"}
+        >
+          {minimized ? <FiMaximize2 size={14} /> : <FiMinimize2 size={16} />}
+        </button>
       </div>
 
-      <div className="bg-gray-800 px-6 py-4 flex justify-center gap-3">
+      <div
+        className={`flex items-center justify-center gap-3 ${minimized ? "py-3" : "pb-10 pt-6"}`}
+      >
         <button
-          onClick={() => webrtcService.toggleAudio()}
-          className={`p-4 rounded-full ${
-            isAudioMuted ? "bg-red-500" : "bg-gray-600"
-          }`}
+          onClick={() => setMuted(sessionRef.current?.toggleAudio() ?? false)}
+          className={controlClass(muted)}
+          aria-label={muted ? "Unmute" : "Mute"}
         >
-          {isAudioMuted ? (
-            <FiMicOff className="text-white text-xl" />
-          ) : (
-            <FiMic className="text-white text-xl" />
-          )}
+          {muted ? <FiMicOff className="text-lg" /> : <FiMic className="text-lg" />}
         </button>
 
-        {isVideo && (
+        {call.isVideo && (
           <button
-            onClick={() => webrtcService.toggleVideo()}
-            className={`p-4 rounded-full ${
-              isVideoMuted ? "bg-red-500" : "bg-gray-600"
-            }`}
+            onClick={() => setCameraOff(sessionRef.current?.toggleVideo() ?? false)}
+            className={controlClass(cameraOff)}
+            aria-label={cameraOff ? "Turn camera on" : "Turn camera off"}
           >
-            {isVideoMuted ? (
-              <FiVideoOff className="text-white text-xl" />
-            ) : (
-              <FiVideo className="text-white text-xl" />
-            )}
+            {cameraOff ? <FiVideoOff className="text-lg" /> : <FiVideo className="text-lg" />}
           </button>
         )}
 
-        <button onClick={handleEndCall} className="p-4 bg-red-500 rounded-full">
-          <FiPhoneOff className="text-white text-xl" />
-        </button>
+        {canShareScreen && !minimized && (
+          <button
+            onClick={toggleScreenShare}
+            className={`${controlClass(sharing)} hidden sm:flex`}
+            aria-label={sharing ? "Stop sharing" : "Share screen"}
+          >
+            <FiMonitor className="text-lg" />
+          </button>
+        )}
 
         <button
-          onClick={() => webrtcService.toggleScreenShare()}
-          className={`p-4 rounded-full ${
-            isScreenSharing ? "bg-green-500" : "bg-gray-600"
-          }`}
+          onClick={hangUp}
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500 text-white shadow-lg shadow-red-500/30 transition hover:bg-red-600"
+          aria-label="Hang up"
         >
-          <FiMonitor className="text-white text-xl" />
-        </button>
-
-        <button
-          onClick={() => setIsFullscreen(!isFullscreen)}
-          className="p-4 bg-gray-600 rounded-full"
-        >
-          <FiMaximize2 className="text-white text-xl" />
-        </button>
-
-        <button
-          onClick={() => setIsMinimized(true)}
-          className="p-4 bg-gray-600 rounded-full"
-        >
-          <FiMinimize2 className="text-white text-xl" />
+          <FiPhoneOff className="text-xl" />
         </button>
       </div>
     </motion.div>
