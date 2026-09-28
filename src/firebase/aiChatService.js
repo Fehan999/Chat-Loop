@@ -1,250 +1,135 @@
-// firebase/aiChatService.js
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
-  collection,
   addDoc,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  updateDoc,
-  doc,
+  collection,
   getDocs,
+  limitToLast,
+  onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
-  limit,
+  writeBatch,
 } from "firebase/firestore";
+import { toDate } from "../utils/dateUtils";
 import { db } from "./config";
 
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI("12345678");
+// gemini through google ai studio. the free tier is plenty for a chat app,
+// the key comes from .env (see README)
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const MODEL = import.meta.env.VITE_GEMINI_MODEL || "gemini-flash-latest";
+const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
-// AI Chat session management
-let aiChatSessions = new Map();
+// how many earlier messages go along with each question
+const CONTEXT_MESSAGES = 20;
 
-export const AI_CHAT_ID = "ai_assistant_chat";
-export const AI_USER_ID = "ai_assistant";
+const SYSTEM_PROMPT = [
+  "You are ChatLoop AI, the assistant inside the ChatLoop chat app.",
+  "Be friendly, clear and to the point. Keep replies short unless the user asks for detail.",
+  "Use simple markdown (bold, lists, code blocks) only when it actually helps.",
+].join(" ");
 
-export const getOrCreateAIChat = async (userId) => {
-  try {
-    const chatsRef = collection(db, "chats");
-    const q = query(
-      chatsRef,
-      where("participants", "array-contains", userId),
-      where("isAI", "==", true)
-    );
+export const isAIConfigured = () => Boolean(API_KEY);
 
-    const querySnapshot = await getDocs(q);
+// each user has their own history under aiChats/{uid}/messages
+const aiMessagesRef = (uid) => collection(db, "aiChats", uid, "messages");
 
-    if (!querySnapshot.empty) {
-      return { id: querySnapshot.docs[0].id, ...querySnapshot.docs[0].data() };
+export const listenToAIMessages = (uid, callback) =>
+  onSnapshot(
+    query(aiMessagesRef(uid), orderBy("timestamp", "asc"), limitToLast(100)),
+    (snapshot) =>
+      callback(
+        snapshot.docs.map((d) => {
+          const data = d.data({ serverTimestamps: "estimate" });
+          return { id: d.id, ...data, timestamp: toDate(data.timestamp) };
+        })
+      ),
+    (error) => {
+      console.error("AI messages listener failed:", error);
+      callback([]);
     }
+  );
 
-    // Create new AI chat
-    const aiChat = {
-      participants: [userId, AI_USER_ID],
-      isAI: true,
-      createdAt: serverTimestamp(),
-      lastMessage: "Hello! I'm your AI assistant. How can I help you today?",
-      lastMessageTime: serverTimestamp(),
-      otherUser: {
-        uid: AI_USER_ID,
-        name: "AI Assistant",
-        username: "ai_assistant",
-        avatar:
-          "https://ui-avatars.com/api/?name=AI&background=10b981&color=fff",
-        status: "online",
-        isAI: true,
-      },
-    };
+// gemini wants the conversation to start with the user and alternate turns,
+// so failed replies are dropped and back to back turns are merged
+const buildContents = (history) => {
+  const contents = [];
+  history
+    .filter((m) => !m.error && m.text?.trim())
+    .forEach((m) => {
+      const role = m.role === "model" ? "model" : "user";
+      const last = contents[contents.length - 1];
+      if (last?.role === role) last.parts[0].text += `\n\n${m.text}`;
+      else contents.push({ role, parts: [{ text: m.text }] });
+    });
+  while (contents[0]?.role === "model") contents.shift();
+  return contents;
+};
 
-    const docRef = await addDoc(chatsRef, aiChat);
-    return { id: docRef.id, ...aiChat };
-  } catch (error) {
-    console.error("Error creating AI chat:", error);
+const askGemini = async (history) => {
+  const response = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": API_KEY },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: buildContents(history),
+      generationConfig: { temperature: 0.7 },
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data?.error?.message || `Gemini request failed (${response.status})`);
+    error.status = response.status;
     throw error;
   }
+
+  const text = data.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text || "")
+    .join("")
+    .trim();
+  if (!text) throw new Error(data.promptFeedback?.blockReason ? "blocked" : "empty");
+  return text;
 };
 
-export const sendAIMessage = async (chatId, userMessage, userId, userName) => {
+const friendlyError = (error) => {
+  if (error.status === 429)
+    return "I'm getting a lot of questions right now. Give it a minute and try again.";
+  if (error.status === 400 || error.status === 403)
+    return "The AI key isn't working. Check VITE_GEMINI_API_KEY in your .env file.";
+  if (error.message === "blocked")
+    return "I can't help with that one, sorry. Try asking something else.";
+  if (error instanceof TypeError)
+    return "I couldn't reach the AI service. Check your connection and try again.";
+  return "Something went wrong on my side. Please try again.";
+};
+
+// saves the question, asks gemini with recent context, saves the answer.
+// errors are saved as a reply too so the conversation explains what happened
+export const sendAIMessage = async (uid, text, history = []) => {
+  await addDoc(aiMessagesRef(uid), { role: "user", text, timestamp: serverTimestamp() });
+
+  let reply;
+  let failed = false;
   try {
-    // Add user message to Firestore
-    const messagesRef = collection(db, "chats", chatId, "messages");
-    const userMessageData = {
-      text: userMessage,
-      senderId: userId,
-      senderName: userName,
-      timestamp: serverTimestamp(),
-      read: true,
-      type: "sent",
-    };
-
-    const userMsgDoc = await addDoc(messagesRef, userMessageData);
-
-    // Update chat last message
-    const chatRef = doc(db, "chats", chatId);
-    await updateDoc(chatRef, {
-      lastMessage: userMessage,
-      lastMessageTime: serverTimestamp(),
-    });
-
-    // Get AI response
-    const aiResponse = await getAIResponse(userMessage, chatId, userId);
-
-    // Add AI response to Firestore
-    const aiMessageData = {
-      text: aiResponse,
-      senderId: AI_USER_ID,
-      senderName: "AI Assistant",
-      timestamp: serverTimestamp(),
-      read: false,
-      type: "received",
-      isAI: true,
-    };
-
-    const aiMsgDoc = await addDoc(messagesRef, aiMessageData);
-
-    // Update chat last message with AI response
-    await updateDoc(chatRef, {
-      lastMessage: aiResponse,
-      lastMessageTime: serverTimestamp(),
-    });
-
-    return aiResponse;
+    reply = await askGemini([...history.slice(-CONTEXT_MESSAGES), { role: "user", text }]);
   } catch (error) {
-    console.error("Error sending AI message:", error);
-    throw error;
-  }
-};
-
-const getAIResponse = async (userMessage, chatId, userId) => {
-  try {
-    // Get or create chat session
-    let session = aiChatSessions.get(chatId);
-
-    if (!session) {
-      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-
-      // Get conversation history for context
-      const history = await getConversationHistory(chatId, userId);
-
-      const chat = model.startChat({
-        history: history,
-        generationConfig: {
-          maxOutputTokens: 1000,
-          temperature: 0.7,
-          topP: 0.8,
-          topK: 40,
-        },
-      });
-
-      aiChatSessions.set(chatId, chat);
-      session = chat;
-    }
-
-    const result = await session.sendMessage(userMessage);
-    const response = await result.response;
-    return response.text();
-  } catch (error) {
-    console.error("Error getting AI response:", error);
-    return getFallbackResponse(userMessage);
-  }
-};
-
-const getConversationHistory = async (chatId, userId) => {
-  try {
-    const messagesRef = collection(db, "chats", chatId, "messages");
-    const q = query(
-      messagesRef,
-      orderBy("timestamp", "desc"),
-      limit(10) // Get last 10 messages for context
-    );
-
-    const querySnapshot = await getDocs(q);
-    const messages = [];
-
-    querySnapshot.docs.reverse().forEach((doc) => {
-      const msg = doc.data();
-      messages.push({
-        role: msg.senderId === userId ? "user" : "model",
-        parts: [{ text: msg.text }],
-      });
-    });
-
-    return messages;
-  } catch (error) {
-    console.error("Error getting conversation history:", error);
-    return [];
-  }
-};
-
-const getFallbackResponse = (userMessage) => {
-  const lowercaseMsg = userMessage.toLowerCase();
-
-  if (lowercaseMsg.includes("hello") || lowercaseMsg.includes("hi")) {
-    return "Hello! How can I assist you today?";
-  }
-  if (lowercaseMsg.includes("how are you")) {
-    return "I'm doing great, thank you for asking! How can I help you?";
-  }
-  if (lowercaseMsg.includes("help")) {
-    return "I can help you with various tasks including answering questions, providing information, helping with writing, coding, and much more. What do you need assistance with?";
-  }
-  if (lowercaseMsg.includes("thank")) {
-    return "You're welcome! Is there anything else I can help you with?";
+    console.error("Gemini error:", error);
+    failed = true;
+    reply = friendlyError(error);
   }
 
-  return "I understand you're asking about something. Could you please provide more details so I can better assist you?";
-};
-
-// Listen to AI messages
-export const listenToAIMessages = (chatId, callback) => {
-  const messagesRef = collection(db, "chats", chatId, "messages");
-  const q = query(messagesRef, orderBy("timestamp", "asc"));
-
-  return onSnapshot(q, (snapshot) => {
-    const messages = [];
-    snapshot.forEach((doc) => {
-      messages.push({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp?.toDate?.() || new Date(),
-      });
-    });
-    callback(messages);
+  await addDoc(aiMessagesRef(uid), {
+    role: "model",
+    text: reply,
+    error: failed,
+    timestamp: serverTimestamp(),
   });
 };
 
-// Clear AI chat history
-export const clearAIChatHistory = async (chatId) => {
-  try {
-    const messagesRef = collection(db, "chats", chatId, "messages");
-    const querySnapshot = await getDocs(messagesRef);
-
-    const deletePromises = querySnapshot.docs.map((doc) =>
-      updateDoc(doc.ref, { text: "[Message deleted]", deleted: true })
-    );
-
-    await Promise.all(deletePromises);
-
-    // Reset session
-    aiChatSessions.delete(chatId);
-
-    return true;
-  } catch (error) {
-    console.error("Error clearing AI chat history:", error);
-    return false;
-  }
-};
-
-// Get AI typing indicator
-export const setAITypingIndicator = async (chatId, isTyping) => {
-  try {
-    const chatRef = doc(db, "chats", chatId);
-    await updateDoc(chatRef, {
-      aiTyping: isTyping,
-      aiTypingTimestamp: serverTimestamp(),
-    });
-  } catch (error) {
-    console.error("Error setting AI typing indicator:", error);
+export const clearAIChat = async (uid) => {
+  const snapshot = await getDocs(aiMessagesRef(uid));
+  for (let i = 0; i < snapshot.docs.length; i += 450) {
+    const batch = writeBatch(db);
+    snapshot.docs.slice(i, i + 450).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
   }
 };
